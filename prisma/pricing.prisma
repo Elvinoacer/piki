@@ -1,0 +1,153 @@
+model ZonePricingConfig {
+  id              String   @id @db.VarChar(64)
+  countyCode      String   @db.VarChar(8)
+  zoneName        String   @db.VarChar(128)
+  vehicleType     String   @db.VarChar(32)
+  baseFare        Decimal  @db.Decimal(10,2)
+  perKmRate       Decimal  @db.Decimal(10,2)
+  perMinuteRate   Decimal  @db.Decimal(10,2)
+  minimumFare     Decimal  @db.Decimal(10,2)
+  bookingFee      Decimal  @db.Decimal(10,2)
+  currency        String   @default("KES") @db.VarChar(3)
+  isActive        Boolean  @default(true)
+  effectiveFrom   DateTime @db.Timestamptz
+  effectiveTo     DateTime? @db.Timestamptz
+  createdAt       DateTime @default(now()) @db.Timestamptz
+  updatedAt       DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  surgeRules    SurgeRule[]
+  fareEstimates FareEstimate[]
+
+  @@index([countyCode, vehicleType, isActive])
+  @@map("zone_pricing_configs")
+}
+
+model SurgeRule {
+  id               String   @id @db.VarChar(64)
+  zoneId           String   @db.VarChar(64)
+  zone             ZonePricingConfig @relation(fields: [zoneId], references: [id])
+  triggerType      String   @db.VarChar(32)
+  multiplier       Decimal  @db.Decimal(4,2)
+  daysOfWeek       Int[]    @db.SmallInt
+  startTime        DateTime? @db.Time
+  endTime          DateTime? @db.Time
+  weatherCondition String?  @db.VarChar(32)
+  demandThreshold  Decimal? @db.Decimal(5,2)
+  isActive         Boolean  @default(true)
+  priority         Int      @default(0)
+  createdBy        String?  @db.VarChar(64)
+  createdAt        DateTime @default(now()) @db.Timestamptz
+
+  @@index([zoneId, isActive, priority(sort: Desc)])
+  @@map("surge_rules")
+}
+
+model SurgeGlobalConfig {
+  id                     Int      @id @default(1) @db.SmallInt
+  maxAllowedMultiplier   Decimal  @default(3.0) @db.Decimal(4,2)
+  enabled                Boolean  @default(true)
+
+  @@map("surge_global_config")
+}
+
+model PromoCode {
+  code                     String   @id @db.VarChar(32)
+  type                     String   @db.VarChar(32)
+  value                    Decimal  @db.Decimal(10,2)
+  maxDiscountAmount        Decimal? @db.Decimal(10,2)
+  minFareThreshold         Decimal? @db.Decimal(10,2)
+  countyRestrictions       String[] @db.VarChar(8)
+  vehicleTypeRestrictions  String[] @db.VarChar(32)
+  usageLimitPerUser        Int?
+  totalUsageLimit          Int?
+  currentUsageCount        Int      @default(0)
+  validFrom                DateTime @db.Timestamptz
+  validTo                  DateTime @db.Timestamptz
+  isActive                 Boolean  @default(true)
+
+  usages PromoCodeUsage[]
+
+  @@map("promo_codes")
+}
+
+model PromoCodeUsage {
+  id          BigInt   @id @default(autoincrement())
+  code        String   @db.VarChar(32)
+  promoCode   PromoCode @relation(fields: [code], references: [code])
+  riderId     String   @db.VarChar(64)
+  tripId      String   @db.VarChar(64)
+  usedAt      DateTime @default(now()) @db.Timestamptz
+
+  @@index([code, riderId])
+  @@map("promo_code_usages")
+}
+
+model ReferralCreditBalance {
+  riderId   String   @id @db.VarChar(64)
+  balance   Decimal  @default(0) @db.Decimal(10,2)
+  currency  String   @default("KES") @db.VarChar(3)
+  updatedAt DateTime @default(now()) @db.Timestamptz
+
+  @@map("referral_credit_balances")
+}
+
+model CancellationFeeRule {
+  id                                String   @id @db.VarChar(64)
+  vehicleType                       String   @unique @db.VarChar(32)
+  gracePeriodSeconds                Int
+  driverEnRouteFee                  Decimal  @db.Decimal(10,2)
+  driverArrivedFee                  Decimal  @db.Decimal(10,2)
+  riderNoShowFee                    Decimal  @db.Decimal(10,2)
+  waiveFeeIfDriverDelayedSeconds    Int?
+  isActive                          Boolean  @default(true)
+
+  @@map("cancellation_fee_rules")
+}
+
+model FareNegotiation {
+  id           String   @id @db.VarChar(64)
+  estimateId   String   @db.VarChar(64)
+  tripId       String?  @db.VarChar(64)
+  status       String   @db.VarChar(16)
+  finalFare    Decimal? @db.Decimal(10,2)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  rounds       FareNegotiationRound[]
+
+  @@map("fare_negotiations")
+}
+
+model FareNegotiationRound {
+  id              BigInt   @id @default(autoincrement())
+  negotiationId   String   @db.VarChar(64)
+  negotiation     FareNegotiation @relation(fields: [negotiationId], references: [id])
+  roundNumber     Int
+  actor           String   @db.VarChar(8)
+  proposedFare    Decimal  @db.Decimal(10,2)
+  status          String   @db.VarChar(16)
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  @@unique([negotiationId, roundNumber])
+  @@map("fare_negotiation_rounds")
+}
+
+model FareEstimate {
+  estimateId              String   @id @db.VarChar(64)
+  riderId                 String   @db.VarChar(64)
+  zoneId                  String   @db.VarChar(64)
+  zone                    ZonePricingConfig @relation(fields: [zoneId], references: [id])
+  vehicleType             String   @db.VarChar(32)
+  distanceKm              Decimal  @db.Decimal(8,2)
+  durationMinutes         Decimal  @db.Decimal(8,2)
+  breakdownJson           Json
+  negotiable              Boolean  @default(false)
+  negotiationBoundsJson   Json?
+  routePolyline           String   @db.Text
+  routeProvider           String   @db.VarChar(16)
+  expiresAt               DateTime @db.Timestamptz
+  createdAt               DateTime @default(now()) @db.Timestamptz
+
+  @@index([expiresAt])
+  @@map("fare_estimates")
+}

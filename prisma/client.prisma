@@ -1,0 +1,20 @@
+// =====================================================================================
+// Client Domain (minimal — only what's needed for 3.1 signup/role selection)
+// Full client features (saved places, favorites, etc.) belong to 3.10 and are
+// intentionally NOT duplicated here to avoid scope creep / migration churn.
+// =====================================================================================
+
+/// Profile created automatically when a User selects role = CLIENT.
+/// Kept intentionally minimal for 3.1; extended by 3.10 (saved places,
+/// preferred payment method) and 3.16 (Client Plus tier) in later features.
+model ClientProfile {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("client_profiles")
+}

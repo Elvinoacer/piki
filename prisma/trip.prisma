@@ -1,0 +1,253 @@
+// ─── ENUMS ──────────────────────────────────────────────────
+
+enum TripStatus {
+  REQUESTED    // Client submitted request, searching for rider
+  BROADCASTING // Dispatching to nearby riders
+  ACCEPTED     // A rider accepted
+  ARRIVING     // Rider en-route to pickup
+  ARRIVED      // Rider at pickup location
+  IN_PROGRESS  // Trip underway (rider picked up client)
+  COMPLETED    // Trip finished
+  CANCELLED    // Cancelled by client, rider, or system
+  EXPIRED      // No rider accepted within timeout window
+}
+
+enum DispatchStrategy {
+  BROADCAST    // First-accept-wins among N nearby riders
+  SEQUENTIAL   // Offer to riders one-by-one, ranked by score
+}
+
+enum ZoneStatus {
+  ACTIVE
+  INACTIVE
+  COMING_SOON
+}
+
+// ─── RIDER LOCATION (live positions) ────────────────────────
+
+// Separate from RiderProfile to allow high-frequency upserts
+// without touching the heavy profile row.
+model RiderLocation {
+  id          String    @id @default(cuid())
+  riderId     String    @unique
+  rider       User      @relation("RiderLocationToUser", fields: [riderId], references: [id], onDelete: Cascade)
+
+  // PostGIS geography point — use raw SQL to read/write:
+  // ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+  // Stored as geography for accurate metre-based distance queries.
+  // Prisma does not natively map PostGIS types; we use Unsupported.
+  location    Unsupported("geography(Point,4326)")?
+
+  latitude    Float     // Redundant copy for non-geo queries / debugging
+  longitude   Float
+
+  heading     Float?    // Degrees 0-360 (compass heading)
+  speedKmh    Float?
+  accuracy    Float?    // GPS accuracy in metres
+
+  isOnline    Boolean   @default(false)
+  status      RiderStatus @default(OFFLINE)
+
+  updatedAt   DateTime  @updatedAt
+
+  @@index([isOnline, status]) // Fast filter: online+available riders
+  @@map("rider_locations")
+}
+
+enum RiderStatus {
+  OFFLINE
+  AVAILABLE
+  ON_TRIP
+  BREAK
+}
+
+// ─── TRIP ────────────────────────────────────────────────────
+
+model Trip {
+  id              String    @id @default(cuid())
+  clientId        String
+  client          User      @relation("ClientTrips", fields: [clientId], references: [id])
+  riderId         String?
+  rider           User?     @relation("RiderTrips", fields: [riderId], references: [id])
+
+  status          TripStatus @default(REQUESTED)
+  type            TripType
+
+  // Pickup
+  pickupLat       Float
+  pickupLng       Float
+  pickupAddress   String
+  pickupLocation  Unsupported("geography(Point,4326)")?
+
+  // Dropoff
+  dropoffLat      Float?
+  dropoffLng      Float?
+  dropoffAddress  String?
+  dropoffLocation Unsupported("geography(Point,4326)")?
+
+  // Route snapshot (encoded polyline from Maps API)
+  routePolyline   String?
+  distanceKm      Float?
+  estimatedMins   Int?
+
+  // Fare
+  fareEstimate    Decimal?  @db.Decimal(10, 2)
+  fareFinal       Decimal?  @db.Decimal(10, 2)
+  currency        String    @default("KES")
+  surgeMultiplier Float     @default(1.0)
+  stopSurchargeKes Float    @default(0)
+
+  // --- Scheduling (SCHEDULED_RIDE only) ---
+  scheduledAt DateTime?
+
+  // --- Parcel/Errand metadata ---
+  parcelSize        ParcelSize?
+  parcelDescription String?
+  recipientName     String?
+  recipientPhone    String?
+  requiresSignature Boolean     @default(false)
+
+  // --- Food/Shop Delivery (future-ready) ---
+  merchantId String?
+
+  // --- Notes ---
+  clientNotes String?
+
+  // Dispatch config (copied from zone config at request time)
+  dispatchStrategy DispatchStrategy @default(BROADCAST)
+  searchRadiusKm   Float    @default(3.0)
+  maxWaitSecs      Int      @default(30)   // Before radius expands
+  radiusExpandKm   Float    @default(2.0)  // Expansion increment
+  maxRadiusKm      Float    @default(10.0)
+  maxExpansions    Int      @default(3)
+
+  // Tracking
+  riderAcceptedAt DateTime?
+  riderArrivedAt  DateTime?
+  tripStartedAt   DateTime?
+  tripEndedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelledBy     String?   // 'client' | 'rider' | 'system'
+  cancelReason    String?
+
+  zoneId          String?
+  zone            Zone?     @relation(fields: [zoneId], references: [id])
+
+  stops           TripStop[]
+  broadcasts      TripBroadcast[]
+  gpsTrail        TripGpsPoint[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([clientId])
+  @@index([riderId])
+  @@map("trips")
+}
+
+enum TripType {
+  BODA_RIDE
+  PARCEL_DELIVERY
+  FOOD_DELIVERY
+  ERRAND
+  SCHEDULED_RIDE
+  MULTI_STOP
+}
+
+enum ParcelSize {
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+// ─── TRIP BROADCAST LOG ──────────────────────────────────────
+
+// Which riders were offered this trip and their response
+model TripBroadcast {
+  id          String    @id @default(cuid())
+  tripId      String
+  trip        Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  riderId     String
+  rider       User      @relation("RiderBroadcasts", fields: [riderId], references: [id])
+
+  sentAt      DateTime  @default(now())
+  respondedAt DateTime?
+  response    BroadcastResponse?
+  radiusKm    Float     // Radius at time of broadcast (may expand)
+
+  @@unique([tripId, riderId])
+  @@index([tripId])
+  @@map("trip_broadcasts")
+}
+
+enum BroadcastResponse {
+  ACCEPTED
+  DECLINED
+  EXPIRED   // Rider didn't respond within countdown
+}
+
+// ─── TRIP GPS TRAIL ─────────────────────────────────────────
+
+// Raw GPS breadcrumbs for dispute resolution & analytics
+model TripGpsPoint {
+  id        String    @id @default(cuid())
+  tripId    String
+  trip      Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  riderId   String
+
+  lat       Float
+  lng       Float
+  heading   Float?
+  speedKmh  Float?
+  recordedAt DateTime
+
+  @@index([tripId, recordedAt])
+  @@map("trip_gps_trail")
+}
+
+// ─── TRIP STOP ───────────────────────────────────────────────
+
+model TripStop {
+  id        String    @id @default(cuid())
+  tripId    String
+  trip      Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  order     Int
+  lat       Float
+  lng       Float
+  address   String
+  arrivedAt DateTime?
+
+  @@index([tripId, order])
+  @@map("trip_stops")
+}
+
+// ─── ZONE (Geofence / Service Area) ──────────────────────────
+
+model Zone {
+  id          String    @id @default(cuid())
+  name        String    // e.g. "Nairobi CBD", "Kisumu", "Nakuru"
+  county      String
+  status      ZoneStatus @default(COMING_SOON)
+
+  // PostGIS polygon for geofence boundary
+  // Written via raw SQL: ST_GeomFromGeoJSON(...)::geography
+  boundary    Unsupported("geography(Polygon,4326)")?
+
+  // Pricing overrides for this zone
+  baseFareKes    Decimal  @default(50)   @db.Decimal(10, 2)
+  perKmKes       Decimal  @default(30)   @db.Decimal(10, 2)
+  perMinKes      Decimal  @default(3)    @db.Decimal(10, 2)
+
+  // Dispatch defaults for this zone
+  defaultRadiusKm  Float  @default(3.0)
+  maxRadiusKm      Float  @default(10.0)
+
+  trips       Trip[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("zones")
+}

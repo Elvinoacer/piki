@@ -1,0 +1,26 @@
+// =====================================================================================
+// SACCO Domain (STUB)
+// -------------------------------------------------------------------------------------
+// The full SACCO/Fleet management module (roster, commission splits, stage zones,
+// analytics) is part of Phase 3 (section 3.11) and is intentionally NOT implemented
+// here. This minimal model exists ONLY to satisfy the optional RiderProfile.saccoId
+// relation referenced by 3.1 ("SACCO-affiliated rider" at onboarding).
+//
+// When 3.11 is implemented, this model should be EXTENDED (not replaced) — add an
+// `adminUserId` (SACCO Admin's User), commission config, stages, etc. Do not rename
+// `SaccoOrg` or break this relation without a migration plan, since RiderProfile
+// already depends on it.
+// =====================================================================================
+
+model SaccoOrg {
+  id String @id @default(cuid())
+
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  riders RiderProfile[]
+
+  @@map("sacco_orgs")
+}

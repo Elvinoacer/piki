@@ -1,0 +1,212 @@
+// =====================================================================================
+// Rider Onboarding Domain — RiderProfile, Document, Payout Methods, Verification
+// =====================================================================================
+
+/// Profile created when a User selects role = RIDER. Holds vehicle info,
+/// onboarding/verification status, current location & online status, and
+/// (eventually) aggregate rating — though rating aggregation itself is owned
+/// by the Ratings feature (3.8) and only referenced here as cached fields.
+///
+/// IMPORTANT: A rider cannot go "online" (RiderAvailability != OFFLINE)
+/// unless verificationStatus == APPROVED. This is enforced at the service
+/// layer (see lib/services/rider-status.service.ts) and SHOULD also be
+/// enforced via a DB check constraint if the target Postgres version
+/// supports it cleanly with Prisma (left as a follow-up migration note).
+model RiderProfile {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // --- Vehicle info ---------------------------------------------------------
+  vehicleType    VehicleType @default(MOTORCYCLE)
+  /// Number plate, normalized uppercase, no spaces (e.g. "KMEA123B").
+  numberPlate    String?     @unique
+  vehicleMake    String?
+  vehicleModel   String?
+  vehicleColor   String?
+  vehicleYear    Int?
+
+  // --- License details (mirrors the DRIVING_LICENSE Document but kept as
+  // structured fields for quick filtering/matching without joining Document) --
+  licenseNumber String?
+  licenseClass  LicenseClass?
+  licenseExpiresAt DateTime?
+
+  // --- PSV / NTSA badge (optional per PRD — "if applicable") -----------------
+  psvBadgeNumber String?
+  psvBadgeExpiresAt DateTime?
+
+  // --- Insurance (mirrors INSURANCE_CERTIFICATE Document) ---------------------
+  insurancePolicyNumber String?
+  insuranceExpiresAt    DateTime?
+
+  // --- Verification-grade profile photo (face-match candidate) ----------------
+  /// Set once the PROFILE_PHOTO document is uploaded; mirrors Document.fileUrl
+  /// for fast access without a join (e.g. displaying rider badge to clients per 3.7).
+  profilePhotoUrl String?
+  /// Result of face-match check between PROFILE_PHOTO and NATIONAL_ID photo,
+  /// if AI-automated verification (4.4/3.1) is enabled.
+  faceMatchScore    Float?
+  faceMatchVerifiedAt DateTime?
+
+  // --- Helmet checklist (3.7 — onboarding compliance nudge, not hardware-enforced) --
+  helmetChecklistAcknowledgedAt DateTime?
+
+  // --- Verification / approval state -----------------------------------------
+  verificationStatus RiderVerificationStatus @default(INCOMPLETE)
+  /// True once every required Document for this rider's vehicleType is APPROVED
+  /// AND core fields (license, plate, insurance) are filled — i.e. onboarding
+  /// form itself is complete, independent of admin/AI approval.
+  onboardingCompletedAt DateTime?
+  verifiedAt            DateTime?
+  rejectionReason       String?
+
+  // --- Availability / live status (full geo fields live in 3.2; status enum here) --
+  availability   RiderAvailability @default(OFFLINE)
+  availabilityUpdatedAt DateTime?
+
+  // --- Cached rating snapshot (source of truth = Rating aggregation in 3.8) ---
+  /// Denormalized for fast sort/display; recalculated by a background job.
+  ratingAverage Float @default(0)
+  ratingCount   Int   @default(0)
+
+  // --- SACCO linkage (2.x roles — "SACCO-affiliated rider") --------------------
+  saccoId             String?
+  sacco               SaccoOrg?            @relation(fields: [saccoId], references: [id], onDelete: SetNull)
+  saccoMembershipStatus SaccoMembershipStatus?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Relations ----------------------------------------------------------------
+  documents       Document[]
+  payoutMethods   RiderPayoutMethod[]
+  verificationReviews RiderVerificationReview[]
+
+  @@index([verificationStatus])
+  @@index([availability])
+  @@index([saccoId])
+  @@map("rider_profiles")
+}
+
+/// A single uploaded compliance document for a rider (3.1 onboarding checklist):
+/// National ID, Driving License, PSV/NTSA badge, Logbook, Insurance Certificate,
+/// Profile Photo. Each document is independently reviewable (manual or AI) and
+/// can carry its own expiry date (license/insurance expiry tracking, 3.9).
+///
+/// A rider may have multiple rows of the same `type` over time (re-uploads after
+/// rejection or renewal); `isActive` marks the current one used for verification.
+model Document {
+  id String @id @default(cuid())
+
+  riderId String
+  rider   RiderProfile @relation(fields: [riderId], references: [id], onDelete: Cascade)
+
+  type DocumentType
+
+  /// Path/key within the private S3-compatible bucket (NOT a public URL).
+  /// Signed URLs are generated on-demand by the API (NFR — signed URLs only).
+  fileKey String
+  /// Original filename as uploaded, for display/audit purposes.
+  originalFilename String?
+  mimeType         String?
+  fileSizeBytes    Int?
+
+  /// Document-specific structured number, e.g. National ID number,
+  /// driving license number, logbook number, insurance policy number,
+  /// PSV badge number. Duplicated onto RiderProfile for the "current"
+  /// values where useful (see RiderProfile fields above).
+  documentNumber String?
+
+  /// For documents that expire (DRIVING_LICENSE, INSURANCE_CERTIFICATE,
+  /// PSV_BADGE). Null for NATIONAL_ID, LOGBOOK, PROFILE_PHOTO.
+  expiresAt DateTime?
+
+  status            DocumentStatus     @default(PENDING)
+  verificationMethod VerificationMethod?
+  /// Free-text reason shown to the rider if status = REJECTED.
+  rejectionReason   String?
+  /// Raw response/confidence payload from an AI document-check provider,
+  /// stored for audit (3.1 "automated AI document check").
+  aiCheckResultJson Json?
+  aiCheckScore      Float?
+
+  /// True if this is the current/active document of its type for the rider.
+  /// Only one Document per (riderId, type) should have isActive = true.
+  isActive Boolean @default(true)
+
+  reviewedById String?
+  reviewedAt   DateTime?
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([riderId, type, isActive])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("rider_documents")
+}
+
+/// Bank or M-Pesa payout destination for a rider (3.1 — "Bank/M-Pesa details
+/// for payouts"). A rider may register multiple methods but exactly one
+/// should be marked `isDefault` at a time (enforced at service layer).
+///
+/// Sensitive fields (account numbers) are stored encrypted at rest by the
+/// application layer (see lib/crypto) — Prisma sees only the ciphertext.
+model RiderPayoutMethod {
+  id String @id @default(cuid())
+
+  riderId String
+  rider   RiderProfile @relation(fields: [riderId], references: [id], onDelete: Cascade)
+
+  method PayoutMethod
+
+  // --- M-Pesa -----------------------------------------------------------------
+  /// E.164 phone number registered for M-Pesa payouts (often same as User.phone
+  /// but may differ — e.g. a SIM registered to a relative).
+  mpesaPhoneEnc String?
+
+  // --- Bank -------------------------------------------------------------------
+  bankName          String?
+  bankBranch        String?
+  /// Encrypted bank account number.
+  bankAccountNumberEnc String?
+  /// Account holder name, for reconciliation against National ID name.
+  accountHolderName String?
+
+  isDefault  Boolean @default(false)
+  isVerified Boolean @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([riderId])
+  @@map("rider_payout_methods")
+}
+
+/// Audit trail of approval/rejection decisions on a rider's overall
+/// verification (separate from per-document review, which is captured on
+/// Document.reviewedById/reviewedAt). Each row represents one admin (or
+/// system/AI) decision event — supports re-review after a rejection +
+/// resubmission cycle.
+model RiderVerificationReview {
+  id String @id @default(cuid())
+
+  riderId String
+  rider   RiderProfile @relation(fields: [riderId], references: [id], onDelete: Cascade)
+
+  /// Null if decided by an automated AI pipeline rather than a human admin.
+  reviewerId String?
+  reviewer   User?   @relation("ReviewerUser", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  method   VerificationMethod
+  decision RiderVerificationStatus // expected: APPROVED | REJECTED | SUSPENDED
+  notes    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([riderId])
+  @@map("rider_verification_reviews")
+}

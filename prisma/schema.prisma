@@ -1,0 +1,149 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../app/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [postgis]
+}
+
+// =====================================================================================
+// Pikii — Prisma Schema
+// Feature: 3.1 Authentication & Onboarding
+// =====================================================================================
+// NOTE: Prisma 7 supports multi-file schemas under prisma/schema/*.prisma.
+// All files in this directory are compiled together as one schema.
+// Run: npx prisma generate --schema=./prisma/schema
+// =====================================================================================
+// -------------------------------------------------------------------------------------
+// Shared Enums (used across Auth, Onboarding, and referenced by other domains)
+// -------------------------------------------------------------------------------------
+
+/// High-level role assigned to a User at signup. Determines which profile
+/// (RiderProfile / ClientProfile / SaccoOrg membership) is provisioned.
+enum UserRole {
+  CLIENT
+  RIDER
+  SACCO_ADMIN
+  PLATFORM_ADMIN
+  SUPPORT_AGENT
+}
+
+/// Overall account lifecycle status.
+enum UserStatus {
+  PENDING_VERIFICATION // OTP not yet confirmed
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DEACTIVATED // user-initiated deletion / soft delete
+}
+
+/// Supported in-app languages (3.1 — i18n English & Swahili from day one).
+enum Locale {
+  EN
+  SW
+}
+
+/// OAuth providers supported for social login.
+enum OAuthProvider {
+  GOOGLE
+}
+
+/// Purpose of an OTP code — allows reuse of one OTP table for multiple flows.
+enum OtpPurpose {
+  SIGNUP
+  LOGIN
+  PHONE_CHANGE
+  PASSWORD_RESET
+}
+
+/// Delivery channel for an OTP.
+enum OtpChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+/// Rider's overall verification/approval state — gates ability to go "online".
+enum RiderVerificationStatus {
+  INCOMPLETE // onboarding not finished
+  PENDING_REVIEW // submitted, awaiting admin/AI review
+  APPROVED
+  REJECTED
+  SUSPENDED // previously approved, later suspended (e.g. expired doc)
+}
+
+/// Online/availability status for an approved rider.
+enum RiderAvailability {
+  OFFLINE
+  AVAILABLE
+  ON_TRIP
+  BREAK
+}
+
+/// Vehicle category — drives which documents are required (e.g. PSV badge).
+enum VehicleType {
+  MOTORCYCLE
+  TUKTUK
+  CAR
+  VAN
+}
+
+/// Type of compliance document collected during rider onboarding.
+enum DocumentType {
+  NATIONAL_ID
+  DRIVING_LICENSE
+  PSV_BADGE
+  LOGBOOK
+  INSURANCE_CERTIFICATE
+  PROFILE_PHOTO
+  GOOD_CONDUCT_CERTIFICATE // future-ready, not in MVP form but reserved
+  OTHER
+}
+
+/// Per-document verification status.
+enum DocumentStatus {
+  PENDING // uploaded, not yet reviewed
+  AI_REVIEW // automated check in progress
+  APPROVED
+  REJECTED
+  EXPIRED // expiry date passed since approval
+}
+
+/// How a document/profile was verified.
+enum VerificationMethod {
+  MANUAL
+  AI_AUTOMATED
+}
+
+/// Driving license classes relevant to bodaboda / PSV operations (NTSA).
+enum LicenseClass {
+  A1
+  A2
+  A3
+  B
+  CLASS_A // legacy/general motorcycle class label kept for compatibility
+  CLASS_F
+  OTHER
+}
+
+/// Payout method a rider can register for withdrawals.
+enum PayoutMethod {
+  MPESA
+  BANK_TRANSFER
+}
+
+/// SACCO membership approval state for a rider linking to a SACCO at signup/onboarding.
+enum SaccoMembershipStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  REMOVED
+}
