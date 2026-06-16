@@ -2,8 +2,7 @@
 // Wallet operations — always write ledger entries atomically with balance changes
 
 import { prisma } from "@/lib/prisma";
-import { WalletTransactionReason, WalletTransactionType } from "@/app/generated/prisma";
-import { Decimal } from "@/app/generated/prisma/runtime/library";
+import { WalletTransactionReason, WalletTransactionType, Prisma } from "@/app/generated/prisma";
 
 // ----------------------------------------------------------------
 // Get or create wallet for a user
@@ -59,7 +58,7 @@ export async function creditWallet({
 
     await tx.wallet.update({
       where: { id: wallet.id },
-      data: { balance: new Decimal(balanceAfter) },
+      data: { balance: new Prisma.Decimal(balanceAfter) },
     });
 
     return tx.walletTransaction.create({
@@ -67,9 +66,9 @@ export async function creditWallet({
         walletId: wallet.id,
         type: WalletTransactionType.CREDIT,
         reason,
-        amount: new Decimal(amount),
-        balanceBefore: new Decimal(balanceBefore),
-        balanceAfter: new Decimal(balanceAfter),
+        amount: new Prisma.Decimal(amount),
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
         referenceId,
         description,
         metadata: metadata as any,
@@ -114,7 +113,7 @@ export async function debitWallet({
 
     await tx.wallet.update({
       where: { id: wallet.id },
-      data: { balance: new Decimal(balanceAfter) },
+      data: { balance: new Prisma.Decimal(balanceAfter) },
     });
 
     return tx.walletTransaction.create({
@@ -122,9 +121,9 @@ export async function debitWallet({
         walletId: wallet.id,
         type: WalletTransactionType.DEBIT,
         reason,
-        amount: new Decimal(amount),
-        balanceBefore: new Decimal(balanceBefore),
-        balanceAfter: new Decimal(balanceAfter),
+        amount: new Prisma.Decimal(amount),
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
         referenceId,
         description,
         metadata: metadata as any,
