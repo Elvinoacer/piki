@@ -2,7 +2,7 @@
 // Wallet operations — always write ledger entries atomically with balance changes
 
 import { prisma } from "@/lib/prisma";
-import { WalletTransactionReason, WalletTransactionType, Prisma } from "@/app/generated/prisma";
+import { WalletTransactionReason, WalletTransactionType, Prisma } from "@/app/generated/prisma/client";
 
 // ----------------------------------------------------------------
 // Get or create wallet for a user
