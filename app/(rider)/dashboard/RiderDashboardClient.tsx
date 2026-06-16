@@ -3,7 +3,6 @@
 // Client shell: hydrates Zustand store, wires socket, renders tabbed UI
 
 import { useEffect } from "react";
-import { useSession } from "next-auth/react";
 import { useRiderDashboardStore } from "@/store/riderDashboardStore";
 import { useRiderSocket } from "@/components/rider/useRiderSocket";
 
@@ -34,10 +33,10 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 
 interface Props {
   initialData: RiderDashboardData;
+  riderId: string;
 }
 
-export function RiderDashboardClient({ initialData }: Props) {
-  const { data: session } = useSession();
+export function RiderDashboardClient({ initialData, riderId }: Props) {
   const {
     activeTab,
     setActiveTab,
@@ -62,7 +61,7 @@ export function RiderDashboardClient({ initialData }: Props) {
   }, []); // intentionally once — subsequent updates come via sockets
 
   // Wire real-time socket
-  useRiderSocket(session?.user?.riderId as string | undefined);
+  useRiderSocket(riderId);
 
   // Count critical docs
   const criticalDocs = documents.filter((d) => {

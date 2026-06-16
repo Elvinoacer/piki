@@ -5,7 +5,8 @@
 
 import { useEffect, useCallback } from "react";
 import { useRiderDashboardStore } from "@/store/riderDashboardStore";
-import type { IncomingRequest, ActiveTrip } from "@/store/riderDashboardStore";
+import type { ActiveTrip } from "@/store/riderDashboardStore";
+import type { IncomingRequest } from "@/types/rider-dashboard";
 
 // ─── Pusher-flavoured integration ────────────────────────────────────────────
 // If using Ably or Socket.IO, swap the channel/event bindings below.

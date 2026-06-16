@@ -2,7 +2,7 @@
 // Server-side Prisma queries powering the Rider Dashboard (PRD §3.9)
 // All functions are async and run in Next.js Server Components / Route Handlers.
 
-import { prisma } from "@/lib/prisma"; // your existing prisma client singleton
+import { prisma } from "@/lib/prisma";
 import type {
   RiderDashboardData,
   EarningsSummary,
@@ -65,25 +65,25 @@ export async function fetchRiderProfile(riderId: string): Promise<RiderProfile> 
 
   return {
     id: profile.id,
-    name: profile.user.name,
+    name: `${profile.user.firstName ?? ""} ${profile.user.lastName ?? ""}`.trim() || "Rider",
     phone: profile.user.phone,
     avatarUrl: profile.user.avatarUrl,
-    status: profile.status as RiderProfile["status"],
-    rating: profile.rating,
+    status: profile.availability as any,
+    rating: profile.ratingAverage,
     badges: deriveRiderBadges(profile),
-    plateNumber: profile.plateNumber,
+    plateNumber: profile.numberPlate ?? "",
     saccoName: profile.sacco?.name ?? null,
   };
 }
 
 function deriveRiderBadges(profile: {
-  isVerified: boolean;
-  rating: number;
+  verificationStatus: string;
+  ratingAverage: number;
   totalTrips: number;
 }): string[] {
   const badges: string[] = [];
-  if (profile.isVerified) badges.push("Verified");
-  if (profile.rating >= 4.8 && profile.totalTrips >= 50) badges.push("Top Rated");
+  if (profile.verificationStatus === "APPROVED") badges.push("Verified");
+  if (profile.ratingAverage >= 4.8 && profile.totalTrips >= 50) badges.push("Top Rated");
   if (profile.totalTrips >= 100) badges.push("Century Rider");
   return badges;
 }
@@ -103,16 +103,20 @@ export async function fetchEarningsSummary(
 
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+  const profile = await prisma.riderProfile.findUniqueOrThrow({ where: { id: riderId }, select: { userId: true } });
+  
   const trips = await prisma.trip.findMany({
     where: {
-      riderId,
+      riderId: profile.userId,
       status: "COMPLETED",
-      completedAt: { gte: startOfMonth },
+      tripEndedAt: { gte: startOfMonth },
     },
     include: {
-      ratings: { where: { raterId: { not: riderId } } }, // ratings from client
+      ratings: { where: { direction: "CLIENT_TO_RIDER" } },
+      payment: true,
+      client: { select: { firstName: true, lastName: true } },
     },
-    orderBy: { completedAt: "desc" },
+    orderBy: { tripEndedAt: "desc" },
   });
 
   let today = 0;
@@ -120,8 +124,8 @@ export async function fetchEarningsSummary(
   let thisMonth = 0;
 
   const earningTrips = trips.map((t) => {
-    const net = t.netFare;
-    const completedAt = t.completedAt!;
+    const net = Number(t.payment?.riderEarning ?? t.fareFinal ?? 0);
+    const completedAt = t.tripEndedAt!;
     if (completedAt >= startOfDay) today += net;
     if (completedAt >= startOfWeek) thisWeek += net;
     thisMonth += net;
@@ -132,20 +136,20 @@ export async function fetchEarningsSummary(
       tripId: t.id,
       completedAt: completedAt.toISOString(),
       pickupAddress: t.pickupAddress,
-      dropoffAddress: t.dropoffAddress,
-      tripType: t.tripType as any,
-      grossFare: t.grossFare,
-      commission: t.commission,
+      dropoffAddress: t.dropoffAddress ?? "Unknown",
+      tripType: t.type as any,
+      grossFare: Number(t.fareFinal ?? 0),
+      commission: Number(t.payment?.commissionAmount ?? 0),
       net,
-      paymentMethod: t.paymentMethod as any,
-      clientName: t.clientName,
+      paymentMethod: (t.payment?.method ?? "CASH") as any,
+      clientName: `${t.client?.firstName ?? ""} ${t.client?.lastName ?? ""}`.trim() || "Client",
       clientRating,
     };
   });
 
   // Pending payout = wallet pending balance
   const wallet = await prisma.wallet.findUnique({
-    where: { userId: (await prisma.riderProfile.findUniqueOrThrow({ where: { id: riderId }, select: { userId: true } })).userId },
+    where: { userId: profile.userId },
     select: { pending: true },
   });
 
@@ -153,7 +157,7 @@ export async function fetchEarningsSummary(
     today,
     thisWeek,
     thisMonth,
-    pendingPayout: wallet?.pending ?? 0,
+    pendingPayout: Number(wallet?.pending ?? 0),
     trips: earningTrips,
   };
 }
@@ -165,18 +169,21 @@ export async function fetchTripHistory(
   { page = 1, pageSize = 20 }: { page?: number; pageSize?: number }
 ): Promise<{ items: TripHistoryItem[]; hasMore: boolean }> {
   const skip = (page - 1) * pageSize;
+  const profile = await prisma.riderProfile.findUniqueOrThrow({ where: { id: riderId }, select: { userId: true } });
 
   const [trips, total] = await Promise.all([
     prisma.trip.findMany({
-      where: { riderId },
+      where: { riderId: profile.userId },
       include: {
-        ratings: { where: { raterId: { not: riderId } } },
+        ratings: { where: { direction: "CLIENT_TO_RIDER" } },
+        payment: true,
+        client: { select: { firstName: true, lastName: true, avatarUrl: true } },
       },
-      orderBy: { requestedAt: "desc" },
+      orderBy: { createdAt: "desc" },
       skip,
       take: pageSize,
     }),
-    prisma.trip.count({ where: { riderId } }),
+    prisma.trip.count({ where: { riderId: profile.userId } }),
   ]);
 
   const items: TripHistoryItem[] = trips.map((t) => {
@@ -184,18 +191,18 @@ export async function fetchTripHistory(
     return {
       id: t.id,
       status: t.status as any,
-      tripType: t.tripType as any,
+      tripType: t.type as any,
       pickupAddress: t.pickupAddress,
-      dropoffAddress: t.dropoffAddress,
-      startedAt: t.startedAt?.toISOString() ?? null,
-      completedAt: t.completedAt?.toISOString() ?? null,
-      fare: t.netFare,
-      paymentMethod: t.paymentMethod as any,
-      clientName: t.clientName,
-      clientAvatar: t.clientAvatar,
+      dropoffAddress: t.dropoffAddress ?? "Unknown",
+      startedAt: t.tripStartedAt?.toISOString() ?? null,
+      completedAt: t.tripEndedAt?.toISOString() ?? null,
+      fare: Number(t.fareFinal ?? 0),
+      paymentMethod: (t.payment?.method ?? "CASH") as any,
+      clientName: `${t.client?.firstName ?? ""} ${t.client?.lastName ?? ""}`.trim() || "Client",
+      clientAvatar: t.client?.avatarUrl ?? null,
       ratingReceived: rating?.score ?? null,
       ratingComment: rating?.comment ?? null,
-      distanceKm: t.distanceKm,
+      distanceKm: t.distanceKm ?? 0,
     };
   });
 
@@ -205,20 +212,22 @@ export async function fetchTripHistory(
 // ─── Payouts ─────────────────────────────────────────────────────────────────
 
 export async function fetchPayouts(riderId: string): Promise<PayoutRequest[]> {
+  const profile = await prisma.riderProfile.findUniqueOrThrow({ where: { id: riderId }, select: { userId: true } });
+
   const payouts = await prisma.payout.findMany({
-    where: { riderId },
-    orderBy: { requestedAt: "desc" },
+    where: { riderId: profile.userId },
+    orderBy: { createdAt: "desc" },
     take: 50,
   });
 
   return payouts.map((p) => ({
     id: p.id,
-    amount: p.amount,
+    amount: Number(p.amount),
     status: p.status as any,
-    requestedAt: p.requestedAt.toISOString(),
+    requestedAt: p.createdAt.toISOString(),
     processedAt: p.processedAt?.toISOString() ?? null,
-    mpesaRef: p.mpesaRef,
-    phoneNumber: p.phoneNumber,
+    mpesaRef: p.mpesaB2cRef ?? p.mpesaReceiptNumber ?? null,
+    phoneNumber: p.mpesaPhone,
   }));
 }
 
@@ -235,7 +244,7 @@ export async function fetchWalletBalance(
     where: { userId: profile.userId },
     select: { balance: true, pending: true },
   });
-  return { available: wallet?.balance ?? 0, pending: wallet?.pending ?? 0 };
+  return { available: Number(wallet?.balance ?? 0), pending: Number(wallet?.pending ?? 0) };
 }
 
 // ─── Performance stats ────────────────────────────────────────────────────────
@@ -246,9 +255,10 @@ export async function fetchPerformanceStats(
   const profile = await prisma.riderProfile.findUniqueOrThrow({
     where: { id: riderId },
     select: {
+      userId: true,
       acceptanceRate: true,
       completionRate: true,
-      rating: true,
+      ratingAverage: true,
       totalDistanceKm: true,
       totalTrips: true,
     },
@@ -256,17 +266,17 @@ export async function fetchPerformanceStats(
 
   // All-time earnings
   const earningsAgg = await prisma.trip.aggregate({
-    where: { riderId, status: "COMPLETED" },
-    _sum: { netFare: true },
+    where: { riderId: profile.userId, status: "COMPLETED" },
+    _sum: { fareFinal: true },
   });
 
   return {
     acceptanceRate: Math.round(profile.acceptanceRate),
     completionRate: Math.round(profile.completionRate),
-    averageRating: Math.round(profile.rating * 10) / 10,
+    averageRating: Math.round(profile.ratingAverage * 10) / 10,
     totalDistanceKm: Math.round(profile.totalDistanceKm),
     totalTrips: profile.totalTrips,
-    totalEarningsAllTime: earningsAgg._sum.netFare ?? 0,
+    totalEarningsAllTime: Number(earningsAgg._sum.fareFinal ?? 0),
   };
 }
 
@@ -292,8 +302,8 @@ export async function fetchDocuments(
 
   return docs.map((d) => {
     let daysUntilExpiry: number | null = null;
-    if (d.expiryDate) {
-      const diff = d.expiryDate.getTime() - now.getTime();
+    if (d.expiresAt) {
+      const diff = d.expiresAt.getTime() - now.getTime();
       daysUntilExpiry = Math.ceil(diff / (1000 * 60 * 60 * 24));
     }
 
@@ -301,10 +311,10 @@ export async function fetchDocuments(
       id: d.id,
       type: d.type as any,
       label: DOCUMENT_LABELS[d.type] ?? d.type,
-      expiryDate: d.expiryDate?.toISOString() ?? null,
+      expiryDate: d.expiresAt?.toISOString() ?? null,
       daysUntilExpiry,
-      verificationStatus: d.verificationStatus as any,
-      fileUrl: d.fileUrl,
+      verificationStatus: d.status as any,
+      fileUrl: d.fileKey, // Map fileKey to fileUrl for the UI
     };
   });
 }
@@ -324,14 +334,16 @@ export async function fetchHeatmapPoints(): Promise<HeatmapPoint[]> {
       ROUND(CAST("pickupLat" AS NUMERIC), 3)  AS lat,
       ROUND(CAST("pickupLng" AS NUMERIC), 3)  AS lng,
       COUNT(*)                                  AS cnt
-    FROM "Trip"
-    WHERE "requestedAt" >= ${since}
+    FROM "trips"
+    WHERE "createdAt" >= ${since}
       AND "status" IN ('COMPLETED', 'ACCEPTED', 'IN_PROGRESS')
     GROUP BY 1, 2
     HAVING COUNT(*) >= 2
     ORDER BY cnt DESC
     LIMIT 500
   `;
+
+  if (rows.length === 0) return [];
 
   const maxCnt = Math.max(1, ...rows.map((r) => Number(r.cnt)));
 

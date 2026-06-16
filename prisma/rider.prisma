@@ -72,6 +72,12 @@ model RiderProfile {
   ratingCount   Int   @default(0)
   trustScore    RiderTrustScore?
 
+  // --- Performance Stats (3.9 Rider Dashboard) ---
+  totalDistanceKm  Float @default(0)
+  acceptanceRate   Float @default(100)
+  completionRate   Float @default(100)
+  totalTrips       Int   @default(0)
+
   // --- SACCO linkage (2.x roles — "SACCO-affiliated rider") --------------------
   saccoId             String?
   sacco               SaccoOrg?            @relation(fields: [saccoId], references: [id], onDelete: SetNull)

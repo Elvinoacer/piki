@@ -20,8 +20,8 @@ const DEFAULT_ZOOM = 12;
 export function DemandHeatmap() {
   const { heatmapPoints, riderStatus } = useRiderDashboardStore();
   const mapRef = useRef<HTMLDivElement>(null);
-  const googleMapRef = useRef<google.maps.Map | null>(null);
-  const heatmapLayerRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
+  const googleMapRef = useRef<any>(null);
+  const heatmapLayerRef = useRef<any>(null);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -40,13 +40,13 @@ export function DemandHeatmap() {
       googleMapRef.current = map;
 
       const heatmapData = heatmapPoints.map(
-        (p) =>
-          new window.google.maps.visualization.WeightedLocation({
-            location: new window.google.maps.LatLng(p.lat, p.lng),
-            weight: p.weight,
-          })
+        (p) => ({
+          location: new window.google.maps.LatLng(p.lat, p.lng),
+          weight: p.weight,
+        })
       );
 
+      // @ts-expect-error Google maps types missing constructor args
       const heatmapLayer = new window.google.maps.visualization.HeatmapLayer({
         data: heatmapData,
         map,
@@ -90,11 +90,10 @@ export function DemandHeatmap() {
   useEffect(() => {
     if (!heatmapLayerRef.current || !window.google?.maps) return;
     const data = heatmapPoints.map(
-      (p) =>
-        new window.google.maps.visualization.WeightedLocation({
-          location: new window.google.maps.LatLng(p.lat, p.lng),
-          weight: p.weight,
-        })
+      (p) => ({
+        location: new window.google.maps.LatLng(p.lat, p.lng),
+        weight: p.weight,
+      })
     );
     heatmapLayerRef.current.setData(data);
   }, [heatmapPoints]);
@@ -134,7 +133,7 @@ export function DemandHeatmap() {
 }
 
 // Subtle dark-ish map style for better heatmap contrast
-const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
+const DARK_MAP_STYLES: any[] = [
   { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
   { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
   {
