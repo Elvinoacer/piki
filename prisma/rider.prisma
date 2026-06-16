@@ -76,6 +76,10 @@ model RiderProfile {
   sacco               SaccoOrg?            @relation(fields: [saccoId], references: [id], onDelete: SetNull)
   saccoMembershipStatus SaccoMembershipStatus?
 
+  // --- 3.5 Payments / Payout --------------------------------------------------
+  commissionRateOverride Decimal? @db.Decimal(5, 4)
+  mpesaPhone             String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -74,6 +74,11 @@ model User {
     riderBroadcasts TripBroadcast[] @relation("RiderBroadcasts")
     riderLocation   RiderLocation?  @relation("RiderLocationToUser")
 
+    // --- 3.5 Payments Relations ------------------------------------------------
+    wallet          Wallet?
+    payerPayments   Payment[]       @relation("PayerPayments")
+    riderPayouts    Payout[]        @relation("RiderPayouts")
+
     @@index([role, status])
     @@index([referredById])
     @@map("users")

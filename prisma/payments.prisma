@@ -1,0 +1,151 @@
+// ============================================================
+// Pikii — Payments Schema Additions
+// Append these models to your main schema.prisma
+// Requires: User, Trip, RiderProfile already defined
+// ============================================================
+
+enum PaymentMethod {
+  MPESA
+  WALLET
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum WalletTransactionReason {
+  TOP_UP
+  TRIP_PAYMENT
+  TRIP_EARNING
+  COMMISSION_DEDUCTION
+  PAYOUT
+  REFUND
+  TIP_SENT
+  TIP_RECEIVED
+  PROMO_CREDIT
+  ADJUSTMENT
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ------------------------------------------------------------------
+// Wallet — one per User (client or rider)
+// ------------------------------------------------------------------
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  balance   Decimal  @default(0) @db.Decimal(12, 2)
+  currency  String   @default("KES")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions WalletTransaction[]
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------
+// WalletTransaction — immutable ledger entry
+// ------------------------------------------------------------------
+model WalletTransaction {
+  id          String                  @id @default(cuid())
+  walletId    String
+  wallet      Wallet                  @relation(fields: [walletId], references: [id])
+  type        WalletTransactionType
+  reason      WalletTransactionReason
+  amount      Decimal                 @db.Decimal(12, 2)
+  balanceBefore Decimal               @db.Decimal(12, 2)
+  balanceAfter  Decimal               @db.Decimal(12, 2)
+  referenceId String?                 // external ref (M-Pesa receipt, paymentId, etc.)
+  description String?
+  metadata    Json?                   // extra context (trip fare breakdown, mpesa details)
+  createdAt   DateTime                @default(now())
+
+  // No updatedAt — ledger rows are immutable
+  @@index([walletId])
+  @@index([referenceId])
+  @@index([createdAt])
+}
+
+// ------------------------------------------------------------------
+// Payment — one per trip (or top-up)
+// ------------------------------------------------------------------
+model Payment {
+  id               String        @id @default(cuid())
+  tripId           String?       @unique
+  trip             Trip?         @relation(fields: [tripId], references: [id])
+  payerId          String
+  payer            User          @relation("PayerPayments", fields: [payerId], references: [id])
+  method           PaymentMethod
+  amount           Decimal       @db.Decimal(12, 2)
+  currency         String        @default("KES")
+  status           PaymentStatus @default(PENDING)
+
+  // M-Pesa specific
+  mpesaCheckoutRequestId String?  @unique
+  mpesaReceiptNumber     String?
+  mpesaPhone             String?
+
+  // commission
+  commissionAmount Decimal?  @db.Decimal(12, 2)
+  commissionRate   Decimal?  @db.Decimal(5, 4) // e.g. 0.1200 = 12%
+  riderEarning     Decimal?  @db.Decimal(12, 2)
+
+  // tip (separate from fare)
+  tipAmount Decimal? @db.Decimal(12, 2)
+
+  idempotencyKey String  @unique @default(cuid())
+  failureReason  String?
+  metadata       Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([payerId])
+  @@index([status])
+  @@index([mpesaCheckoutRequestId])
+  @@index([createdAt])
+}
+
+// ------------------------------------------------------------------
+// Payout — rider withdrawal to M-Pesa (B2C)
+// ------------------------------------------------------------------
+model Payout {
+  id              String      @id @default(cuid())
+  riderId         String
+  rider           User        @relation("RiderPayouts", fields: [riderId], references: [id])
+  amount          Decimal     @db.Decimal(12, 2)
+  currency        String      @default("KES")
+  mpesaPhone      String
+  status          PayoutStatus @default(PENDING)
+  mpesaB2cRef     String?
+  mpesaReceiptNumber String?
+  failureReason   String?
+  scheduledAt     DateTime?
+  processedAt     DateTime?
+  metadata        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([riderId])
+  @@index([status])
+  @@index([createdAt])
+}

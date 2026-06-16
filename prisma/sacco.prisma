@@ -20,6 +20,7 @@ model SaccoOrg {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  commissionRate  Decimal? @db.Decimal(5, 4)
   riders RiderProfile[]
 
   @@map("sacco_orgs")

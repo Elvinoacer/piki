@@ -97,6 +97,8 @@ model Trip {
   surgeMultiplier Float     @default(1.0)
   stopSurchargeKes Float    @default(0)
 
+  payment         Payment?
+
   // --- Scheduling (SCHEDULED_RIDE only) ---
   scheduledAt DateTime?
 
