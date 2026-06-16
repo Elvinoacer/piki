@@ -1,0 +1,63 @@
+// =============================================================
+// prisma/schema.additions.prisma
+// Feature 3.14 — Search, History & Receipts
+//
+// Add these fields/indexes to your existing Trip model.
+// Full-text search uses PostgreSQL tsvector via raw SQL (PostGIS db).
+// =============================================================
+
+// ── Extend your existing Trip model with these additions ──────
+
+// In your Trip model, ensure these fields exist:
+//
+// model Trip {
+//   id              String      @id @default(cuid())
+//   clientId        String
+//   riderId         String?
+//   type            TripType
+//   status          TripStatus
+//   pickupAddress   String
+//   dropoffAddress  String
+//   pickupLat       Float
+//   pickupLng       Float
+//   dropoffLat      Float
+//   dropoffLng      Float
+//   fareAmount      Float?
+//   fareBreakdown   Json?       // { baseFare, distanceFare, timeFare, surgeFactor, tip }
+//   distanceKm      Float?
+//   durationMin     Int?
+//   paymentMethod   PaymentMethod?
+//   receiptSentAt   DateTime?   // <-- ADD: tracks when PDF receipt was sent
+//   receiptUrl      String?     // <-- ADD: S3/R2 URL of generated PDF
+//   createdAt       DateTime    @default(now())
+//   updatedAt       DateTime    @updatedAt
+//   completedAt     DateTime?
+//   cancelledAt     DateTime?
+//   cancelReason    String?
+//   client          User        @relation("ClientTrips", fields: [clientId], references: [id])
+//   rider           User?       @relation("RiderTrips", fields: [riderId], references: [id])
+//   payment         Payment?
+//   rating          Rating?
+//   stops           TripStop[]
+//
+//   // Full-text search index (PostgreSQL GIN on tsvector)
+//   @@index([clientId, createdAt(sort: Desc)], name: "idx_trip_client_date")
+//   @@index([riderId, createdAt(sort: Desc)],  name: "idx_trip_rider_date")
+//   @@index([status],                           name: "idx_trip_status")
+//   @@index([type],                             name: "idx_trip_type")
+// }
+
+// ── Raw SQL migration to add the tsvector search column ───────
+// Run this once in a Prisma migration (sql file):
+//
+// -- migration: add_trip_search_vector
+// ALTER TABLE "Trip"
+//   ADD COLUMN IF NOT EXISTS search_vector tsvector
+//   GENERATED ALWAYS AS (
+//     to_tsvector('english',
+//       coalesce("pickupAddress", '') || ' ' || coalesce("dropoffAddress", '')
+//     )
+//   ) STORED;
+//
+// CREATE INDEX IF NOT EXISTS idx_trip_search_vector
+//   ON "Trip" USING GIN (search_vector);

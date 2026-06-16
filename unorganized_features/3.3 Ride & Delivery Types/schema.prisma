@@ -1,0 +1,196 @@
+// ============================================================
+// Pikii — Prisma Schema
+// Section 3.3: Ride & Delivery Types
+// ============================================================
+// This file covers the Trip, TripStop, and related enums.
+// Merge into your root schema.prisma; keep your generator /
+// datasource blocks from the main file.
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
+enum TripType {
+  BODA_RIDE       // Passenger, point-to-point
+  PARCEL_DELIVERY // Packages, documents, shopping items
+  FOOD_DELIVERY   // Future-ready: merchant food/shop delivery
+  ERRAND          // Sub-type of parcel: shopping errands
+  SCHEDULED_RIDE  // Boda ride booked in advance
+  MULTI_STOP      // Ride or delivery with waypoints
+}
+
+enum TripStatus {
+  PENDING     // Created, awaiting rider match
+  BROADCAST   // Sent to nearby riders
+  ACCEPTED    // Rider accepted
+  ARRIVING    // Rider en route to pickup
+  ARRIVED     // Rider at pickup location
+  IN_PROGRESS // Trip underway
+  COMPLETED   // Finished successfully
+  CANCELLED   // Cancelled by client, rider, or system
+  EXPIRED     // No rider accepted within timeout
+}
+
+enum ParcelSize {
+  SMALL  // Documents, envelopes — fits in a bag
+  MEDIUM // Grocery bags, small boxes
+  LARGE  // Bulky items — may affect fare
+}
+
+// ─────────────────────────────────────────────
+// Trip — core booking record
+// ─────────────────────────────────────────────
+
+model Trip {
+  id String @id @default(cuid())
+
+  // --- Actors ---
+  clientId String
+  client   User   @relation("ClientTrips", fields: [clientId], references: [id])
+
+  riderId String?
+  rider   User?   @relation("RiderTrips", fields: [riderId], references: [id])
+
+  // --- Type & Status ---
+  type   TripType   @default(BODA_RIDE)
+  status TripStatus @default(PENDING)
+
+  // --- Pickup ---
+  pickupLat     Float
+  pickupLng     Float
+  pickupAddress String
+
+  // --- Dropoff (null for multi-stop until last stop resolved) ---
+  dropoffLat     Float?
+  dropoffLng     Float?
+  dropoffAddress String?
+
+  // --- Scheduling (SCHEDULED_RIDE only) ---
+  // Null = "now". Set = book in advance.
+  scheduledAt DateTime?
+
+  // --- Parcel/Errand metadata ---
+  parcelSize        ParcelSize?
+  parcelDescription String?     // e.g. "A4 envelope, fragile"
+  recipientName     String?
+  recipientPhone    String?
+  requiresSignature Boolean     @default(false)
+
+  // --- Food/Shop Delivery (future-ready) ---
+  // Merchant FK kept nullable so schema is ready without the
+  // Merchant model being required at MVP.
+  merchantId String? // FK → Merchant.id (Phase 4)
+
+  // --- Fare ---
+  estimatedFareKes Float? // Upfront estimate in KES
+  finalFareKes     Float? // Settled on completion
+  distanceKm       Float?
+  durationMinutes  Int?
+  surgeMutiplier   Float  @default(1.0)
+  stopSurchageKes  Float  @default(0) // Extra per added stop
+
+  // --- Multi-stop ---
+  stops TripStop[]
+
+  // --- Notes ---
+  clientNotes String? // Free-text from client at booking
+
+  // --- Timestamps ---
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  acceptedAt   DateTime?
+  arrivedAt    DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+
+  // --- Relations (add more as other models are built) ---
+  payments Payment[]
+  ratings  Rating[]
+
+  @@index([clientId])
+  @@index([riderId])
+  @@index([status])
+  @@index([type])
+  @@index([scheduledAt])
+  @@map("trips")
+}
+
+// ─────────────────────────────────────────────
+// TripStop — ordered waypoints for MULTI_STOP
+// ─────────────────────────────────────────────
+
+model TripStop {
+  id String @id @default(cuid())
+
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  // Position in the stop list (0-indexed after pickup)
+  order Int
+
+  lat     Float
+  lng     Float
+  address String
+
+  // Optional per-stop metadata (useful for errand multi-drop)
+  label        String? // e.g. "Pick up laundry", "Drop at office"
+  arrivedAt    DateTime?
+  completedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tripId, order])
+  @@index([tripId])
+  @@map("trip_stops")
+}
+
+// ─────────────────────────────────────────────
+// Stub models referenced above
+// (expand in their own feature files)
+// ─────────────────────────────────────────────
+
+model User {
+  id          String   @id @default(cuid())
+  phone       String   @unique
+  email       String?  @unique
+  name        String?
+  role        String   @default("CLIENT") // CLIENT | RIDER | SACCO_ADMIN | PLATFORM_ADMIN
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clientTrips Trip[] @relation("ClientTrips")
+  riderTrips  Trip[] @relation("RiderTrips")
+
+  @@map("users")
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("payments")
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("ratings")
+}

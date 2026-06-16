@@ -1,0 +1,89 @@
+// prisma/schema.compliance.prisma
+// Additive schema models for Feature 3.17 — Compliance & Localization.
+// MERGE these models into your main schema.prisma.
+// Requires: User, Trip, Wallet, RiderProfile models already present.
+
+// ─────────────────────────────────────────
+// Document — NTSA rider compliance docs
+// ─────────────────────────────────────────
+model Document {
+  id         String    @id @default(cuid())
+  riderId    String
+  rider      User      @relation(fields: [riderId], references: [id], onDelete: Cascade)
+
+  // NtsaDocumentType enum value
+  type       String
+
+  fileUrl    String
+  uploadedAt DateTime  @default(now())
+  expiresAt  DateTime?
+  verifiedAt DateTime?
+  rejectedAt DateTime?
+  rejectionReason String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([riderId, type])
+  @@index([riderId])
+  @@index([expiresAt])  // For background expiry-check jobs
+}
+
+// ─────────────────────────────────────────
+// UserConsent — Kenya DPA 2019 §30
+// ─────────────────────────────────────────
+model UserConsent {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  location   Boolean  @default(false)
+  marketing  Boolean  @default(false)
+  analytics  Boolean  @default(false)
+
+  ipAddress  String?
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+}
+
+// ─────────────────────────────────────────
+// DataExportRequest — DPA §34 portability
+// ─────────────────────────────────────────
+model DataExportRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status      String   @default("pending") // pending | processing | ready | delivered | failed
+  requestedAt DateTime @default(now())
+  downloadUrl String?
+  expiresAt   DateTime? // Signed URL expiry
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────
+// AccountDeletionRequest — DPA §34 erasure
+// ─────────────────────────────────────────
+model AccountDeletionRequest {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status      String    @default("pending") // pending | scheduled | completed | cancelled
+  requestedAt DateTime  @default(now())
+  scheduledAt DateTime?
+  completedAt DateTime?
+  reason      String?
+
+  @@index([userId])
+  @@index([scheduledAt]) // For deletion worker to find due requests
+}
+
+// ─────────────────────────────────────────
+// RiderProfile additions — KRA PIN
+// Add this field to your existing RiderProfile model:
+//
+//   kraPin  String?   // KRA Personal Identification Number
+//
+// ─────────────────────────────────────────

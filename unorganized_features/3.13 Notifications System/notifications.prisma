@@ -1,0 +1,153 @@
+// ============================================================================
+// Notifications System — Prisma schema fragment
+// Merge these models/enums into your main schema.prisma (datasource/generator
+// blocks already exist there). Run `npx prisma migrate dev --name notifications`
+// after merging.
+// ============================================================================
+
+/// Channels a notification can be delivered through.
+enum NotificationChannel {
+  PUSH
+  SMS
+  IN_APP
+  EMAIL
+}
+
+/// Lifecycle status of a single delivery attempt (per-channel, per-recipient).
+enum NotificationStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED // skipped due to user preference opt-out
+}
+
+/// Canonical event types that can trigger a notification.
+/// Keep in sync with src/lib/notifications/events.ts
+enum NotificationEvent {
+  RIDE_MATCHED
+  RIDER_ARRIVING
+  RIDER_ARRIVED
+  TRIP_STARTED
+  TRIP_COMPLETED
+  TRIP_CANCELLED
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  PAYOUT_PROCESSED
+  DOCUMENT_EXPIRING
+  DOCUMENT_EXPIRED
+  PROMO_AVAILABLE
+  SOS_TRIGGERED
+  BROADCAST // admin-issued broadcast (e.g. "Roadblock on Thika Rd")
+}
+
+/// One logical notification (an "event firing"), fanned out across channels.
+model Notification {
+  id        String             @id @default(cuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  event     NotificationEvent
+  title     String
+  body      String
+  data      Json?              // arbitrary payload: tripId, amount, deepLink, etc.
+
+  // Denormalized "read" state for the in-app inbox / bell icon.
+  read      Boolean            @default(false)
+  readAt    DateTime?
+
+  // Optional linkage back to the entity that triggered this notification.
+  tripId    String?
+  trip      Trip?              @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  deliveries NotificationDelivery[]
+
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([userId, read])
+  @@index([event])
+}
+
+/// Per-channel delivery attempt + result for a Notification.
+/// Lets us retry a single failed channel without re-sending all channels,
+/// and gives us an audit trail for support / debugging.
+model NotificationDelivery {
+  id             String              @id @default(cuid())
+
+  notificationId String
+  notification   Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  channel        NotificationChannel
+  status         NotificationStatus  @default(PENDING)
+
+  // Provider-specific identifiers for tracing (FCM message id, AT messageId, etc.)
+  providerRef    String?
+  errorMessage   String?
+  attempts       Int                 @default(0)
+
+  queuedAt       DateTime?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  failedAt       DateTime?
+
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([notificationId])
+  @@index([status, channel])
+  @@unique([notificationId, channel])
+}
+
+/// Per-user, per-channel, per-event opt-in/out preferences.
+/// A missing row for (userId, event) means "use channel defaults".
+/// `locked` channels (e.g. SMS for OTP, critical safety alerts) cannot be
+/// disabled by the user — enforced in application logic, not schema.
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  event     NotificationEvent
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([userId, event, channel])
+  @@index([userId])
+}
+
+/// Stores device push tokens (FCM) per user/device for fan-out.
+model PushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token     String   @unique
+  platform  String   // "android" | "ios" | "web"
+
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ----------------------------------------------------------------------------
+// Add the following relation fields to your existing `User` and `Trip` models:
+//
+// model User {
+//   ...
+//   notifications        Notification[]
+//   notificationPreferences NotificationPreference[]
+//   pushTokens           PushToken[]
+// }
+//
+// model Trip {
+//   ...
+//   notifications Notification[]
+// }
+// ----------------------------------------------------------------------------

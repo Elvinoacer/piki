@@ -1,0 +1,205 @@
+// ─────────────────────────────────────────────────────────────────
+// PIKII — Monetization schema additions
+// Merge these models into your main schema.prisma
+// ─────────────────────────────────────────────────────────────────
+
+// ─── Subscription Plans (catalogue) ──────────────────────────────
+// Defines the tiers: Pikii Pro (rider), SACCO plans, Client Plus
+model SubscriptionPlan {
+  id              String           @id @default(cuid())
+  name            String           // e.g. "Pikii Pro", "SACCO Starter", "Client Plus"
+  slug            String           @unique // e.g. "pikii-pro", "sacco-starter", "client-plus"
+  targetRole      PlanTargetRole   // RIDER | SACCO | CLIENT
+  billingCycle    BillingCycle     // MONTHLY | ANNUAL
+  priceKes        Decimal          @db.Decimal(10, 2)
+  commissionRate  Decimal?         @db.Decimal(5, 4) // override commission for RIDER plans (e.g. 0.08 = 8%)
+  seatLimit       Int?             // SACCO plans: max riders per seat block
+  features        Json             // free-form list of feature flags/descriptions
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  subscriptions   Subscription[]
+
+  @@index([targetRole, isActive])
+}
+
+// ─── Subscriptions (instances) ───────────────────────────────────
+// One active subscription per user/SACCO at a time
+model Subscription {
+  id              String             @id @default(cuid())
+  planId          String
+  plan            SubscriptionPlan   @relation(fields: [planId], references: [id])
+
+  // Either a userId (rider/client) OR saccoId — exactly one is set
+  userId          String?
+  user            User?              @relation(fields: [userId], references: [id])
+  saccoId         String?
+  sacco           SaccoOrg?          @relation(fields: [saccoId], references: [id])
+
+  status          SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean         @default(false)
+  cancelledAt        DateTime?
+
+  // Payment linkage
+  paymentRef      String?            // M-Pesa transaction ref or wallet deduction ref
+  lastRenewalAt   DateTime?
+  nextRenewalAt   DateTime
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  invoices        SubscriptionInvoice[]
+
+  @@unique([userId, status])        // one active per user
+  @@index([saccoId, status])
+  @@index([nextRenewalAt, status])  // for renewal job
+}
+
+// ─── Subscription Invoices ────────────────────────────────────────
+model SubscriptionInvoice {
+  id              String       @id @default(cuid())
+  subscriptionId  String
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id])
+  amountKes       Decimal      @db.Decimal(10, 2)
+  periodStart     DateTime
+  periodEnd       DateTime
+  paymentRef      String?
+  status          InvoiceStatus @default(PENDING)
+  paidAt          DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([subscriptionId, status])
+}
+
+// ─── Commission Rules ─────────────────────────────────────────────
+// Layered: platform default → SACCO override → subscription override
+// The commission engine resolves them in that order.
+model CommissionRule {
+  id              String             @id @default(cuid())
+  name            String
+  scope           CommissionScope    // PLATFORM | SACCO | SUBSCRIPTION
+  riderTier       String?            // optional: target a rider badge tier
+  saccoId         String?            // if SACCO scope
+  sacco           SaccoOrg?          @relation(fields: [saccoId], references: [id])
+  planId          String?            // if SUBSCRIPTION scope
+  ratePercent     Decimal            @db.Decimal(5, 2) // e.g. 12.00
+  capKes          Decimal?           @db.Decimal(10, 2) // max commission per trip (KES)
+  floorKes        Decimal?           @db.Decimal(10, 2) // min commission per trip (KES)
+  validFrom       DateTime
+  validTo         DateTime?          // null = no expiry
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([scope, isActive])
+  @@index([saccoId, isActive])
+}
+
+// ─── Ad Placements (Sponsored / In-App Ads) ───────────────────────
+model AdCampaign {
+  id              String           @id @default(cuid())
+  advertiserName  String
+  advertiserPhone String?
+  title           String
+  description     String?
+  imageUrl        String?
+  ctaLabel        String?          // e.g. "Order Now", "Learn More"
+  ctaUrl          String?
+  targetAudience  AdAudience       // RIDERS | CLIENTS | BOTH
+  targetZoneIds   String[]         // Zone ids; empty = all zones
+  placement       AdPlacement      // HOME_BANNER | TRIP_COMPLETE | RIDER_EARNINGS
+  budgetKes       Decimal          @db.Decimal(12, 2)
+  spentKes        Decimal          @db.Decimal(12, 2) @default(0)
+  costPerImpression Decimal?       @db.Decimal(8, 4) // KES per impression
+  costPerClick    Decimal?         @db.Decimal(8, 4) // KES per click
+  impressions     Int              @default(0)
+  clicks          Int              @default(0)
+  status          AdStatus         @default(PENDING_REVIEW)
+  reviewedBy      String?          // admin User id
+  reviewNote      String?
+  startsAt        DateTime
+  endsAt          DateTime
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  events          AdEvent[]
+
+  @@index([status, startsAt, endsAt])
+  @@index([placement, status])
+}
+
+// ─── Ad Events (impressions / clicks) ────────────────────────────
+model AdEvent {
+  id              String      @id @default(cuid())
+  campaignId      String
+  campaign        AdCampaign  @relation(fields: [campaignId], references: [id])
+  userId          String?     // the user who saw/clicked
+  eventType       AdEventType // IMPRESSION | CLICK
+  zoneId          String?
+  deviceMeta      Json?       // optional: platform, os
+  occurredAt      DateTime    @default(now())
+
+  @@index([campaignId, eventType])
+  @@index([occurredAt])
+}
+
+// ─── Enums ────────────────────────────────────────────────────────
+enum PlanTargetRole {
+  RIDER
+  SACCO
+  CLIENT
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  VOID
+}
+
+enum CommissionScope {
+  PLATFORM
+  SACCO
+  SUBSCRIPTION
+}
+
+enum AdAudience {
+  RIDERS
+  CLIENTS
+  BOTH
+}
+
+enum AdPlacement {
+  HOME_BANNER
+  TRIP_COMPLETE
+  RIDER_EARNINGS
+}
+
+enum AdStatus {
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  REJECTED
+  COMPLETED
+  BUDGET_EXHAUSTED
+}
+
+enum AdEventType {
+  IMPRESSION
+  CLICK
+}

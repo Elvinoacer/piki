@@ -1,0 +1,207 @@
+// ─────────────────────────────────────────────────────────────
+// SACCO / Fleet Management — Prisma Schema Additions
+// Append these models to your main schema.prisma
+// Stack: Prisma 7+, PostgreSQL + PostGIS
+// ─────────────────────────────────────────────────────────────
+
+// ── SACCO Organisation ──────────────────────────────────────
+model SaccoOrg {
+  id               String             @id @default(cuid())
+  name             String
+  registrationNo   String?            @unique
+  contactPhone     String?
+  contactEmail     String?
+  logoUrl          String?
+  status           SaccoStatus        @default(ACTIVE)
+  /// Default commission % taken by the platform from SACCO-affiliated rides
+  platformCommissionPct Decimal       @db.Decimal(5, 2) @default(10.00)
+  /// Default commission % the SACCO keeps from rider earnings
+  saccoCommissionPct    Decimal       @db.Decimal(5, 2) @default(5.00)
+  payoutManagedBy  PayoutManager      @default(PLATFORM)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  admins           SaccoAdmin[]
+  riders           RiderProfile[]     // riders with saccoId FK
+  commissionRules  CommissionRule[]
+  zoneAssignments  ZoneAssignment[]
+  payouts          Payout[]           // payouts initiated at SACCO level
+  saccoPayoutBatches SaccoPayoutBatch[]
+
+  @@index([status])
+}
+
+enum SaccoStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_APPROVAL
+}
+
+enum PayoutManager {
+  PLATFORM   // Pikii handles all disbursement
+  SACCO      // SACCO admin triggers disbursements manually
+}
+
+// ── SACCO Admin membership ──────────────────────────────────
+model SaccoAdmin {
+  id       String    @id @default(cuid())
+  userId   String
+  saccoId  String
+  role     SaccoRole @default(MEMBER)
+  joinedAt DateTime  @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sacco    SaccoOrg  @relation(fields: [saccoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, saccoId])
+  @@index([saccoId])
+}
+
+enum SaccoRole {
+  OWNER
+  MANAGER
+  MEMBER
+}
+
+// ── Per-rider commission override ────────────────────────────
+// When present, overrides SaccoOrg-level defaults for a specific rider.
+model CommissionRule {
+  id                    String    @id @default(cuid())
+  saccoId               String
+  riderProfileId        String?   // null = fleet-wide rule
+  platformCommissionPct Decimal   @db.Decimal(5, 2)
+  saccoCommissionPct    Decimal   @db.Decimal(5, 2)
+  effectiveFrom         DateTime  @default(now())
+  effectiveTo           DateTime?
+  note                  String?
+  createdAt             DateTime  @default(now())
+
+  sacco        SaccoOrg     @relation(fields: [saccoId], references: [id], onDelete: Cascade)
+  riderProfile RiderProfile? @relation(fields: [riderProfileId], references: [id], onDelete: SetNull)
+
+  @@index([saccoId, riderProfileId])
+}
+
+// ── Zone / Stage assignment ──────────────────────────────────
+// Riders can be assigned to one or more Zones by their SACCO.
+model ZoneAssignment {
+  id             String    @id @default(cuid())
+  saccoId        String
+  riderProfileId String
+  zoneId         String
+  assignedAt     DateTime  @default(now())
+  removedAt      DateTime?
+  assignedBy     String    // userId of the SACCO admin who made the change
+
+  sacco        SaccoOrg     @relation(fields: [saccoId], references: [id], onDelete: Cascade)
+  riderProfile RiderProfile @relation(fields: [riderProfileId], references: [id], onDelete: Cascade)
+  zone         Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([riderProfileId, zoneId]) // one active assignment per rider/zone
+  @@index([saccoId, zoneId])
+}
+
+// ── Bulk document verification queue ────────────────────────
+// Tracks a SACCO admin's bulk-verification actions.
+model BulkVerificationJob {
+  id             String           @id @default(cuid())
+  saccoId        String
+  initiatedBy    String           // userId
+  totalCount     Int
+  processedCount Int              @default(0)
+  status         BulkJobStatus    @default(PENDING)
+  createdAt      DateTime         @default(now())
+  completedAt    DateTime?
+
+  items          BulkVerificationItem[]
+
+  @@index([saccoId, status])
+}
+
+enum BulkJobStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+model BulkVerificationItem {
+  id                  String          @id @default(cuid())
+  jobId               String
+  documentId          String
+  result              VerificationResult?
+  reviewNote          String?
+  processedAt         DateTime?
+
+  job      BulkVerificationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  document Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+enum VerificationResult {
+  APPROVED
+  REJECTED
+  NEEDS_REVIEW
+}
+
+// ── SACCO-level payout batch ─────────────────────────────────
+// When PayoutManager = SACCO, they initiate batch payouts here.
+model SaccoPayoutBatch {
+  id           String            @id @default(cuid())
+  saccoId      String
+  initiatedBy  String            // userId of SACCO admin
+  totalAmount  Decimal           @db.Decimal(12, 2)
+  status       PayoutBatchStatus @default(PENDING)
+  mpesaB2CRef  String?
+  note         String?
+  createdAt    DateTime          @default(now())
+  processedAt  DateTime?
+
+  sacco   SaccoOrg @relation(fields: [saccoId], references: [id], onDelete: Cascade)
+  payouts Payout[]
+
+  @@index([saccoId, status])
+}
+
+enum PayoutBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXTENSIONS TO EXISTING MODELS
+// Add these fields to the respective existing models:
+// ─────────────────────────────────────────────────────────────
+
+// On RiderProfile — add:
+//   saccoId               String?
+//   sacco                 SaccoOrg?          @relation(fields: [saccoId], references: [id], onDelete: SetNull)
+//   commissionRules       CommissionRule[]
+//   zoneAssignments       ZoneAssignment[]
+//   saccoJoinedAt         DateTime?
+//   saccoStatus           SaccoRiderStatus   @default(ACTIVE)
+//   @@index([saccoId])
+
+enum SaccoRiderStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+// On Payout — add:
+//   saccoId          String?
+//   sacco            SaccoOrg?         @relation(fields: [saccoId], references: [id], onDelete: SetNull)
+//   saccoPayoutBatchId String?
+//   saccoPayoutBatch SaccoPayoutBatch? @relation(fields: [saccoPayoutBatchId], references: [id], onDelete: SetNull)
+
+// On Zone — add:
+//   zoneAssignments  ZoneAssignment[]
+
+// On Document — add:
+//   bulkVerificationItems BulkVerificationItem[]
+
+// On User — add:
+//   saccoAdminships  SaccoAdmin[]

@@ -1,0 +1,239 @@
+// prisma/schema.prisma  — RIDER DASHBOARD additions (PRD §3.9)
+// Merge these models into your existing schema.prisma.
+// Requires: postgresql provider, PostGIS extension already enabled.
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum RiderStatus {
+  AVAILABLE
+  ON_TRIP
+  BREAK
+  OFFLINE
+}
+
+enum TripStatus {
+  REQUESTED
+  ACCEPTED
+  ARRIVING
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TripType {
+  RIDE
+  PARCEL
+  ERRAND
+  FOOD
+}
+
+enum PaymentMethod {
+  MPESA
+  WALLET
+  CASH
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum DocumentType {
+  NATIONAL_ID
+  DRIVING_LICENSE
+  PSV_BADGE
+  LOGBOOK
+  INSURANCE
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+// ─── Core models ────────────────────────────────────────────────────────────
+
+model User {
+  id          String   @id @default(cuid())
+  phone       String   @unique
+  email       String?  @unique
+  name        String
+  avatarUrl   String?
+  role        String   @default("CLIENT") // CLIENT | RIDER | SACCO_ADMIN | PLATFORM_ADMIN
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  riderProfile  RiderProfile?
+  wallet        Wallet?
+  notifications Notification[]
+  sentRatings   Rating[]       @relation("RaterUser")
+}
+
+model RiderProfile {
+  id               String      @id @default(cuid())
+  userId           String      @unique
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status           RiderStatus @default(OFFLINE)
+  plateNumber      String
+  rating           Float       @default(5.0)
+  totalTrips       Int         @default(0)
+  totalDistanceKm  Float       @default(0)
+  acceptanceRate   Float       @default(100)
+  completionRate   Float       @default(100)
+  // PostGIS point stored as raw text; queries use $queryRaw with ST_DWithin
+  locationLat      Float?
+  locationLng      Float?
+  lastSeenAt       DateTime?
+  isVerified       Boolean     @default(false)
+  saccoId          String?
+  sacco            SaccoOrg?   @relation(fields: [saccoId], references: [id])
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  trips       Trip[]
+  documents   Document[]
+  payouts     Payout[]
+
+  @@index([status])
+  @@index([locationLat, locationLng])
+}
+
+model SaccoOrg {
+  id         String         @id @default(cuid())
+  name       String
+  riders     RiderProfile[]
+  createdAt  DateTime       @default(now())
+}
+
+model Trip {
+  id              String      @id @default(cuid())
+  riderId         String
+  rider           RiderProfile @relation(fields: [riderId], references: [id])
+  clientId        String
+  // client       User         @relation(...) — add if you have ClientProfile
+  tripType        TripType
+  status          TripStatus  @default(REQUESTED)
+  pickupAddress   String
+  dropoffAddress  String
+  pickupLat       Float
+  pickupLng       Float
+  dropoffLat      Float
+  dropoffLng      Float
+  distanceKm      Float       @default(0)
+  grossFare       Float       @default(0)
+  commission      Float       @default(0)
+  netFare         Float       @default(0)
+  paymentMethod   PaymentMethod @default(CASH)
+  requestedAt     DateTime    @default(now())
+  acceptedAt      DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancellationReason String?
+  clientName      String      @default("")
+  clientAvatar    String?
+
+  payment   Payment?
+  ratings   Rating[]
+
+  @@index([riderId, status])
+  @@index([riderId, completedAt])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  tripId        String        @unique
+  trip          Trip          @relation(fields: [tripId], references: [id])
+  method        PaymentMethod
+  amount        Float
+  status        String        @default("PENDING") // PENDING | SUCCESS | FAILED
+  mpesaRef      String?
+  processedAt   DateTime?
+  createdAt     DateTime      @default(now())
+}
+
+model Wallet {
+  id          String              @id @default(cuid())
+  userId      String              @unique
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance     Float               @default(0)
+  pending     Float               @default(0)
+  updatedAt   DateTime            @updatedAt
+
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id        String   @id @default(cuid())
+  walletId  String
+  wallet    Wallet   @relation(fields: [walletId], references: [id])
+  amount    Float                       // positive = credit, negative = debit
+  reason    String
+  reference String?
+  createdAt DateTime @default(now())
+
+  @@index([walletId, createdAt])
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  riderId     String
+  rider       RiderProfile @relation(fields: [riderId], references: [id])
+  amount      Float
+  status      PayoutStatus @default(PENDING)
+  phoneNumber String
+  mpesaRef    String?
+  requestedAt DateTime     @default(now())
+  processedAt DateTime?
+
+  @@index([riderId, requestedAt])
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id])
+  raterId   String
+  rater     User     @relation("RaterUser", fields: [raterId], references: [id])
+  score     Float
+  comment   String?
+  tags      String[] // "safe driving", "polite", "fast", etc.
+  createdAt DateTime @default(now())
+
+  @@unique([tripId, raterId])
+}
+
+model Document {
+  id                 String                     @id @default(cuid())
+  riderId            String
+  rider              RiderProfile               @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  type               DocumentType
+  fileUrl            String?
+  expiryDate         DateTime?
+  verificationStatus DocumentVerificationStatus @default(PENDING)
+  rejectionReason    String?
+  uploadedAt         DateTime                   @default(now())
+  verifiedAt         DateTime?
+
+  @@unique([riderId, type])
+  @@index([riderId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String   // TRIP | PAYOUT | DOCUMENT | PROMO | SYSTEM
+  read      Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}

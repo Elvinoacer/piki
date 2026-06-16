@@ -1,0 +1,135 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// prisma/communication.prisma
+// Append these models to your main schema.prisma file.
+// Assumes User and Trip models already exist.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ---------------------------------------------------------------------------
+// CHAT
+// ---------------------------------------------------------------------------
+
+/// One conversation per trip. Created automatically when a trip is ACCEPTED.
+model ChatRoom {
+  id        String   @id @default(cuid())
+  tripId    String   @unique
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  /// Chat is active while trip is not completed/cancelled
+  isActive  Boolean  @default(true)
+
+  messages  ChatMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("chat_rooms")
+}
+
+model ChatMessage {
+  id         String      @id @default(cuid())
+  roomId     String
+  room       ChatRoom    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  senderId   String
+  sender     User        @relation("MessageSender", fields: [senderId], references: [id])
+
+  body       String      @db.Text
+  type       MessageType @default(TEXT)
+
+  /// Soft-delete / retraction — body becomes "[message removed]" client-side
+  deletedAt  DateTime?
+
+  readAt     DateTime?   // read by the other party
+
+  createdAt  DateTime    @default(now())
+
+  @@index([roomId, createdAt])
+  @@map("chat_messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE        // future
+  SYSTEM       // automated status messages — displayed differently in UI
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFICATIONS
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      NotificationType
+  channel   NotificationChannel
+
+  title     String
+  body      String           @db.Text
+
+  /// JSON payload for deep-linking: { tripId, screen, extra }
+  data      Json?
+
+  /// External delivery receipt (FCM message ID, AT message ID, etc.)
+  externalId String?
+
+  readAt    DateTime?
+  sentAt    DateTime?
+  failedAt  DateTime?
+  failReason String?
+
+  createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  TRIP_REQUESTED
+  TRIP_ACCEPTED
+  RIDER_ARRIVING
+  RIDER_ARRIVED
+  TRIP_STARTED
+  TRIP_COMPLETED
+  TRIP_CANCELLED
+  PAYMENT_RECEIVED
+  PAYOUT_PROCESSED
+  PROMO_AVAILABLE
+  DOCUMENT_EXPIRING
+  CHAT_MESSAGE
+  SYSTEM
+}
+
+enum NotificationChannel {
+  PUSH   // FCM / OneSignal
+  SMS    // Africa's Talking
+  IN_APP // stored in DB, shown in notification centre
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFICATION PREFERENCES
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id      String  @id @default(cuid())
+  userId  String  @unique
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // per-channel opt-ins
+  pushEnabled   Boolean @default(true)
+  smsEnabled    Boolean @default(true)
+  inAppEnabled  Boolean @default(true)
+
+  // per-event type overrides stored as JSON:
+  // { "PROMO_AVAILABLE": { push: false, sms: false }, ... }
+  typeOverrides Json?
+
+  // FCM / push token
+  fcmToken      String?
+  fcmTokenUpdatedAt DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("notification_preferences")
+}

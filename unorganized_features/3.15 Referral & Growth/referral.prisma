@@ -1,0 +1,224 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// PIKII — Referral & Growth schema additions
+// Append these models to your existing schema.prisma
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Referral codes ────────────────────────────────────────────────────────────
+model ReferralCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  ownerId     String
+  owner       User     @relation("OwnedReferralCodes", fields: [ownerId], references: [id])
+  ownerRole   UserRole // CLIENT | RIDER
+  bonusType   ReferralBonusType
+  bonusAmount Decimal  @db.Decimal(10, 2)
+  currency    String   @default("KES")
+  maxUses     Int?     // null = unlimited
+  usedCount   Int      @default(0)
+  expiresAt   DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  redemptions ReferralRedemption[]
+
+  @@index([ownerId])
+  @@index([code])
+}
+
+model ReferralRedemption {
+  id             String         @id @default(cuid())
+  referralCodeId String
+  referralCode   ReferralCode   @relation(fields: [referralCodeId], references: [id])
+  referrerId     String
+  referrer       User           @relation("SentReferrals", fields: [referrerId], references: [id])
+  refereeId      String         @unique // one referral per new user
+  referee        User           @relation("ReceivedReferral", fields: [refereeId], references: [id])
+  refereeRole    UserRole
+  status         ReferralStatus @default(PENDING)
+  referrerBonus  Decimal        @db.Decimal(10, 2)
+  refereeBonus   Decimal        @db.Decimal(10, 2)
+  qualifiedAt    DateTime?      // when the qualifying action happened (first trip, signup)
+  paidOutAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([referralCodeId])
+  @@index([referrerId])
+  @@index([refereeId])
+}
+
+// ── Promotions / Banners ──────────────────────────────────────────────────────
+model Promotion {
+  id           String          @id @default(cuid())
+  title        String
+  description  String?
+  imageUrl     String?
+  ctaLabel     String?
+  ctaUrl       String?
+  targetRole   PromotionTarget @default(ALL)
+  placement    BannerPlacement @default(HOME)
+  priority     Int             @default(0)  // higher = shown first
+  isActive     Boolean         @default(true)
+  startsAt     DateTime
+  endsAt       DateTime
+  promoCodeId  String?         // optional linked promo code
+  promoCode    PromoCode?      @relation(fields: [promoCodeId], references: [id])
+  impressions  Int             @default(0)
+  clicks       Int             @default(0)
+  createdById  String
+  createdBy    User            @relation("CreatedPromotions", fields: [createdById], references: [id])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  dismissals   PromotionDismissal[]
+
+  @@index([targetRole, isActive])
+  @@index([startsAt, endsAt])
+}
+
+model PromotionDismissal {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  dismissedAt DateTime  @default(now())
+
+  @@unique([promotionId, userId])
+}
+
+// ── PromoCode (already referenced in PRD 3.4) ─────────────────────────────────
+// Extend existing PromoCode model or create if missing:
+model PromoCode {
+  id             String        @id @default(cuid())
+  code           String        @unique
+  description    String?
+  discountType   DiscountType
+  discountValue  Decimal       @db.Decimal(10, 2) // % or flat KES
+  minFare        Decimal?      @db.Decimal(10, 2)
+  maxDiscount    Decimal?      @db.Decimal(10, 2)
+  maxUses        Int?
+  usedCount      Int           @default(0)
+  perUserLimit   Int           @default(1)
+  targetRole     PromotionTarget @default(CLIENT)
+  isActive       Boolean       @default(true)
+  startsAt       DateTime
+  endsAt         DateTime
+  createdById    String
+  createdBy      User          @relation("CreatedPromoCodes", fields: [createdById], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  redemptions    PromoRedemption[]
+  promotions     Promotion[]
+
+  @@index([code])
+}
+
+model PromoRedemption {
+  id          String    @id @default(cuid())
+  promoCodeId String
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  tripId      String?
+  discount    Decimal   @db.Decimal(10, 2)
+  redeemedAt  DateTime  @default(now())
+
+  @@unique([promoCodeId, userId, tripId])
+  @@index([userId])
+}
+
+// ── Loyalty Points (Phase 4 ready) ───────────────────────────────────────────
+model LoyaltyAccount {
+  id           String             @id @default(cuid())
+  userId       String             @unique
+  user         User               @relation(fields: [userId], references: [id])
+  balance      Int                @default(0)  // points
+  lifetimeEarned Int              @default(0)
+  lifetimeRedeemed Int            @default(0)
+  tier         LoyaltyTier        @default(BRONZE)
+  updatedAt    DateTime           @updatedAt
+  createdAt    DateTime           @default(now())
+
+  transactions LoyaltyTransaction[]
+}
+
+model LoyaltyTransaction {
+  id               String             @id @default(cuid())
+  loyaltyAccountId String
+  loyaltyAccount   LoyaltyAccount     @relation(fields: [loyaltyAccountId], references: [id])
+  type             LoyaltyTxType
+  points           Int                // positive = earn, negative = redeem
+  balanceAfter     Int
+  description      String
+  referenceId      String?            // tripId, redemptionId, etc.
+  referenceType    String?
+  expiresAt        DateTime?
+  createdAt        DateTime           @default(now())
+
+  @@index([loyaltyAccountId])
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+enum ReferralBonusType {
+  RIDE_CREDIT   // KES credit added to wallet
+  CASH_BONUS    // paid out
+  DISCOUNT      // % off next ride
+}
+
+enum ReferralStatus {
+  PENDING     // signed up, not yet qualified
+  QUALIFIED   // qualifying action done, awaiting payout
+  PAID        // bonus credited
+  EXPIRED     // didn't qualify in time
+  CANCELLED
+}
+
+enum PromotionTarget {
+  ALL
+  CLIENT
+  RIDER
+}
+
+enum BannerPlacement {
+  HOME
+  BOOKING
+  PAYMENT
+  EARNINGS
+  PROFILE
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
+
+enum LoyaltyTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum LoyaltyTxType {
+  EARN_TRIP
+  EARN_REFERRAL
+  EARN_BONUS
+  REDEEM_DISCOUNT
+  EXPIRE
+  ADJUST
+}
+
+// ── User relation additions (add to existing User model) ──────────────────────
+// Add these to your User model:
+//
+//   ownedReferralCodes   ReferralCode[]       @relation("OwnedReferralCodes")
+//   sentReferrals        ReferralRedemption[] @relation("SentReferrals")
+//   receivedReferral     ReferralRedemption?  @relation("ReceivedReferral")
+//   createdPromotions    Promotion[]          @relation("CreatedPromotions")
+//   promotionDismissals  PromotionDismissal[]
+//   createdPromoCodes    PromoCode[]          @relation("CreatedPromoCodes")
+//   promoRedemptions     PromoRedemption[]
+//   loyaltyAccount       LoyaltyAccount?

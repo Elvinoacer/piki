@@ -1,0 +1,173 @@
+// =====================================================================================
+// Auth Domain — User, OTP, Refresh Tokens, OAuth Accounts
+// =====================================================================================
+
+/// Base identity record for every account on the platform (3.1).
+/// Phone number is the primary identifier (Kenyan numbers, E.164 format e.g. +2547XXXXXXXX).
+/// Email is optional. Role is selected at signup and determines linked profile.
+model User {
+  id    String @id @default(cuid())
+
+  // --- Identifiers --------------------------------------------------------
+  /// E.164 format, e.g. +254712345678. Unique, primary login identifier.
+  phone         String  @unique
+  phoneVerifiedAt DateTime?
+
+  /// Optional, used for receipts / notifications / Google login linkage.
+  email           String?   @unique
+  emailVerifiedAt DateTime?
+
+  // --- Identity / profile basics -----------------------------------------
+  firstName String?
+  lastName  String?
+  /// Avatar / display picture URL (signed URL or CDN path). Distinct from
+  /// RiderProfile.profilePhotoUrl, which is the verification-grade photo.
+  avatarUrl String?
+
+  // --- Auth -----------------------------------------------------------------
+  /// Nullable — phone-OTP-only users (the majority) have no password.
+  /// Set only if/when a user opts into password-based login as a fallback.
+  passwordHash String?
+
+  role   UserRole
+  status UserStatus @default(PENDING_VERIFICATION)
+
+  // --- Localization (3.1 — English & Swahili from day one) ----------------
+  locale Locale @default(EN)
+
+  // --- Referral (referenced by 3.15, FK kept here for convenience) --------
+  /// This user's own referral code (generated at signup).
+  referralCode String? @unique
+  /// The User who referred this account, if any.
+  referredById String?
+  referredBy   User?   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals    User[]  @relation("UserReferrals")
+
+  // --- Consent / compliance (3.17 — Data Protection Act 2019) --------------
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+  marketingOptIn    Boolean   @default(false)
+
+  // --- Timestamps -----------------------------------------------------------
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  /// Soft-delete marker for Data Protection Act "right to erasure" requests.
+  deletedAt DateTime?
+  lastLoginAt DateTime?
+
+  // --- Relations ------------------------------------------------------------
+  riderProfile  RiderProfile?
+  clientProfile ClientProfile?
+
+  refreshTokens RefreshToken[]
+  oauthAccounts OAuthAccount[]
+  otpCodes      OtpCode[]
+
+  // Admin/audit relations are defined in other domain files but Prisma
+  // requires the back-relation field to exist on User; declared here so this
+  // file is self-descriptive about what touches User during onboarding review.
+  riderReviewsPerformed RiderVerificationReview[] @relation("ReviewerUser")
+
+  @@index([role, status])
+  @@index([referredById])
+  @@map("users")
+}
+
+/// One-time-passcode records for phone (and optionally email) verification.
+/// Used for SIGNUP, LOGIN, PHONE_CHANGE, and PASSWORD_RESET flows.
+///
+/// Security notes:
+/// - `codeHash` stores a hash (e.g. HMAC-SHA256) of the OTP, never the plaintext.
+/// - Rate limiting (NFR 5) is enforced at the application layer using
+///   (destination, purpose, createdAt) — see src/lib/otp/rate-limit.ts.
+model OtpCode {
+  id String @id @default(cuid())
+
+  /// Nullable: a user row may not exist yet for SIGNUP purpose until OTP is verified.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The phone number or email the code was sent to (E.164 / email string).
+  /// Stored even when userId is null so signup OTPs can be looked up.
+  destination String
+  channel     OtpChannel @default(SMS)
+  purpose     OtpPurpose
+
+  /// HMAC hash of the numeric code — never store plaintext OTPs.
+  codeHash String
+
+  /// Number of verification attempts made against this code.
+  attempts    Int @default(0)
+  /// Max allowed attempts before the code is invalidated (app-config default mirrored here for auditing).
+  maxAttempts Int @default(5)
+
+  expiresAt DateTime
+  consumedAt DateTime?
+
+  /// Africa's Talking / SMS provider message ID, for delivery troubleshooting.
+  providerMessageId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([destination, purpose, createdAt])
+  @@index([userId])
+  @@map("otp_codes")
+}
+
+/// Refresh tokens for session management (JWT access tokens are short-lived
+/// and stateless; refresh tokens are stored hashed so they can be revoked).
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 hash of the opaque refresh token (raw value is only returned once to client).
+  tokenHash String @unique
+
+  /// Device/session metadata for "active sessions" management & security alerts.
+  userAgent String?
+  ipAddress String?
+  deviceLabel String?
+
+  expiresAt DateTime
+  revokedAt DateTime?
+  /// If this token was rotated, points to the token that replaced it (token-rotation audit chain).
+  replacedByTokenId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// Linked OAuth identities (3.1 — Google social login for clients).
+/// Modeled to allow future providers without schema changes.
+model OAuthAccount {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider       OAuthProvider
+  /// The provider's unique subject/account ID (e.g. Google `sub`).
+  providerUserId String
+
+  /// Email returned by the provider at time of link (may differ from User.email).
+  providerEmail String?
+
+  /// Encrypted at rest by the application layer (see lib/crypto). Refresh
+  /// token may be null for providers (e.g. Google One Tap / Sign-In) that
+  /// only issue an ID token without offline access.
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  accessTokenExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}

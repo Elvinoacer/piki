@@ -1,0 +1,298 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Pikii Prisma Schema — Client Dashboard models
+// Merge this into your root schema.prisma
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum TripType {
+  RIDE
+  PARCEL
+  ERRAND
+}
+
+enum TripStatus {
+  REQUESTED
+  ACCEPTED
+  ARRIVING
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  MPESA
+  WALLET
+  CASH
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketCategory {
+  PAYMENT
+  RIDER
+  TRIP
+  ACCOUNT
+  OTHER
+}
+
+enum SavedPlaceType {
+  HOME
+  WORK
+  FREQUENT
+}
+
+enum RaterRole {
+  CLIENT
+  RIDER
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  email     String?  @unique
+  name      String?
+  role      String   @default("CLIENT") // "CLIENT" | "RIDER" | "SACCO_ADMIN" | "PLATFORM_ADMIN"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clientProfile  ClientProfile?
+  riderProfile   RiderProfile?
+  wallet         Wallet?
+  tripsAsClient  Trip[]          @relation("ClientTrips")
+  tripsAsRider   Trip[]          @relation("RiderTrips")
+  favoriteRiders FavoriteRider[] @relation("ClientFavorites")
+  favoritedBy    FavoriteRider[] @relation("RiderFavorites")
+  supportTickets SupportTicket[]
+  ratingsGiven   Rating[]        @relation("RatingsGiven")
+  ratingsReceived Rating[]       @relation("RatingsReceived")
+}
+
+// ─── Client Profile ───────────────────────────────────────────────────────────
+
+model ClientProfile {
+  id             String        @id @default(cuid())
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referralCode   String        @unique @default(cuid())
+  referralCount  Int           @default(0)
+  creditsEarned  Int           @default(0)
+  savedPlaces    SavedPlace[]
+}
+
+// ─── Rider Profile ────────────────────────────────────────────────────────────
+
+model RiderProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  photoUrl          String?
+  plateNumber       String?
+  rating            Float    @default(5.0)
+  totalTrips        Int      @default(0)
+  badges            Json     @default("[]")
+  isOnline          Boolean  @default(false)
+  currentLat        Float?
+  currentLng        Float?
+  currentHeading    Float?
+  locationUpdatedAt DateTime?
+}
+
+// ─── Saved Places ─────────────────────────────────────────────────────────────
+
+model SavedPlace {
+  id              String        @id @default(cuid())
+  clientId        String
+  clientProfile   ClientProfile @relation(fields: [clientId], references: [userId], onDelete: Cascade)
+  type            SavedPlaceType
+  label           String
+  address         String
+  lat             Float
+  lng             Float
+  placeId         String?
+  usageCount      Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  @@index([clientId])
+}
+
+// ─── Favourite Riders ─────────────────────────────────────────────────────────
+
+model FavoriteRider {
+  clientId  String
+  riderId   String
+  client    User   @relation("ClientFavorites", fields: [clientId], references: [id], onDelete: Cascade)
+  rider     User   @relation("RiderFavorites", fields: [riderId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, riderId])
+}
+
+// ─── Zone ─────────────────────────────────────────────────────────────────────
+
+model Zone {
+  id             String @id @default(cuid())
+  name           String
+  isActive       Boolean @default(true)
+  baseFare       Float   @default(50)
+  perKmRate      Float   @default(20)
+  perMinRate     Float   @default(2)
+  currentSurge   Float   @default(1)
+}
+
+// ─── Trip ─────────────────────────────────────────────────────────────────────
+
+model Trip {
+  id                 String        @id @default(cuid())
+  clientId           String
+  riderId            String?
+  client             User          @relation("ClientTrips", fields: [clientId], references: [id])
+  rider              User?         @relation("RiderTrips", fields: [riderId], references: [id])
+  type               TripType
+  status             TripStatus    @default(REQUESTED)
+  pickupAddress      String
+  pickupLat          Float
+  pickupLng          Float
+  destinationAddress String
+  destinationLat     Float
+  destinationLng     Float
+  estimatedFare      Float?
+  actualFare         Float?
+  paymentMethod      PaymentMethod
+  cancellationFee    Float?
+  scheduledAt        DateTime?
+  acceptedAt         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime      @default(now())
+
+  stops   TripStop[]
+  payment Payment?
+  ratings Rating[]
+
+  @@index([clientId])
+  @@index([riderId])
+  @@index([status])
+}
+
+// ─── Trip Stop ────────────────────────────────────────────────────────────────
+
+model TripStop {
+  id      String @id @default(cuid())
+  tripId  String
+  trip    Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  address String
+  lat     Float
+  lng     Float
+  order   Int
+
+  @@index([tripId])
+}
+
+// ─── Payment ──────────────────────────────────────────────────────────────────
+
+model Payment {
+  id         String @id @default(cuid())
+  tripId     String @unique
+  trip       Trip   @relation(fields: [tripId], references: [id])
+  method     PaymentMethod
+  amount     Float
+  status     String // "PENDING" | "PAID" | "FAILED"
+  mpesaRef   String?
+  receiptUrl String?
+  createdAt  DateTime @default(now())
+}
+
+// ─── Rating ───────────────────────────────────────────────────────────────────
+
+model Rating {
+  id        String    @id @default(cuid())
+  tripId    String
+  raterId   String
+  ratedId   String
+  raterRole RaterRole
+  score     Int       // 1-5
+  tags      String[]
+  comment   String?
+  trip      Trip      @relation(fields: [tripId], references: [id])
+  rater     User      @relation("RatingsGiven", fields: [raterId], references: [id])
+  rated     User      @relation("RatingsReceived", fields: [ratedId], references: [id])
+  createdAt DateTime  @default(now())
+
+  @@unique([tripId, raterRole])
+}
+
+// ─── Wallet ───────────────────────────────────────────────────────────────────
+
+model Wallet {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance    Float    @default(0)
+  lastTopUpAt DateTime?
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Promo Code ───────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id            String        @id @default(cuid())
+  code          String        @unique
+  discountType  DiscountType
+  discountValue Float
+  description   String?
+  isActive      Boolean       @default(true)
+  maxUses       Int?
+  usedCount     Int           @default(0)
+  expiresAt     DateTime?
+  redemptions   Redemption[]
+}
+
+model Redemption {
+  id          String    @id @default(cuid())
+  clientId    String
+  promoCodeId String
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id])
+  redeemedAt  DateTime  @default(now())
+
+  @@unique([clientId, promoCodeId])
+}
+
+// ─── Support Ticket ───────────────────────────────────────────────────────────
+
+model SupportTicket {
+  id          String         @id @default(cuid())
+  clientId    String
+  client      User           @relation(fields: [clientId], references: [id])
+  subject     String
+  description String
+  category    TicketCategory
+  status      TicketStatus   @default(OPEN)
+  tripId      String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([clientId])
+}
