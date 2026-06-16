@@ -56,12 +56,22 @@ model User {
     lastLoginAt DateTime?
 
     // --- Relations ------------------------------------------------------------
-    riderProfile  RiderProfile?
-    clientProfile ClientProfile?
+    clientProfile    ClientProfile?
+    riderProfile     RiderProfile?
+    refreshTokens    RefreshToken[]
+    oauthAccounts    OAuthAccount[]
+    otpCodes         OtpCode[]
 
-    refreshTokens RefreshToken[]
-    oauthAccounts OAuthAccount[]
-    otpCodes      OtpCode[]
+    // --- Safety Relations ---
+    trustedContacts  TrustedContact[]
+    sosEvents        SosEvent[]
+    ratingsGiven     Rating[]             @relation("RatingGiven")
+    ratingsReceived  Rating[]             @relation("RatingReceived")
+    reportsMade      Report[]             @relation("ReportsMade")
+    reportsReceived  Report[]             @relation("ReportsReceived")
+    blocksMade       Block[]              @relation("BlocksMade")
+    blocksReceived   Block[]              @relation("BlocksReceived")
+    nightCheckIns    NightCheckIn[]
 
     // Admin/audit relations are defined in other domain files but Prisma
     // requires the back-relation field to exist on User; declared here so this
