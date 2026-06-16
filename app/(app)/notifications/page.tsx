@@ -26,7 +26,7 @@ export default function NotificationsPage() {
 
       <div className="space-y-4">
         {notifications.map((n) => (
-          <NotificationItem key={n.id} notification={n} />
+          <NotificationItem key={n.id} notification={n} onRead={(id) => setNotifications(prev => prev.map(x => x.id === id ? { ...x, readAt: new Date().toISOString() } : x))} />
         ))}
         {notifications.length === 0 && <p className="text-gray-500">No notifications yet.</p>}
       </div>
