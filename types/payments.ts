@@ -1,7 +1,8 @@
 // types/payments.ts
 // Shared TypeScript types for Pikii Payments feature
 
-import { Decimal } from "@/app/generated/prisma/runtime/library";
+import { Prisma } from "@/app/generated/prisma";
+type Decimal = Prisma.Decimal;
 
 // ----------------------------------------------------------------
 // Daraja / M-Pesa
