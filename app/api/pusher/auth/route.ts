@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth/session";
 import { getPusherServer } from "@/lib/pusher";
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) return NextResponse.json({}, { status: 401 });
+  let userId: string;
+  try {
+    const payload = await requireAuth(req as any);
+    userId = payload.sub;
+  } catch {
+    return NextResponse.json({}, { status: 401 });
+  }
 
   const data = await req.text();
   const params = new URLSearchParams(data);
@@ -17,7 +21,6 @@ export async function POST(req: NextRequest) {
   }
 
   // Authorise only channels the user owns
-  const userId = session.user.id;
   const allowed =
     channelName === `private-notify-${userId}` ||
     channelName.startsWith("private-chat-");
