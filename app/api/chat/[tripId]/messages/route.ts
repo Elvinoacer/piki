@@ -3,8 +3,7 @@
 // POST /api/chat/:tripId/messages  — send a new message
 
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth"; // your existing NextAuth config
+import { requireAuth } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { getPusherServer, chatChannel, PUSHER_EVENTS } from "@/lib/pusher";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
@@ -16,8 +15,11 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { tripId: string } }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  let userId: string;
+  try {
+    const payload = await requireAuth(req as any);
+    userId = payload.sub;
+  } catch {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
@@ -34,7 +36,6 @@ export async function GET(
 
   if (!trip) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
 
-  const userId = session.user.id;
   const isParticipant = trip.clientId === userId || trip.riderId === userId;
   if (!isParticipant) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -94,8 +95,11 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { tripId: string } }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  let userId: string;
+  try {
+    const payload = await requireAuth(req as any);
+    userId = payload.sub;
+  } catch {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
@@ -114,7 +118,6 @@ export async function POST(
 
   if (!trip) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
 
-  const userId = session.user.id;
   if (trip.clientId !== userId && trip.riderId !== userId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
