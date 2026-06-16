@@ -77,12 +77,17 @@ model Rating {
   toUser      User         @relation("RatingReceived", fields: [toUserId], references: [id])
   score       Int          // 1–5
   tags        String[]     // e.g. ["safe driving", "polite"]
-  comment     String?
+  comment     String?      @db.Text
   direction   RatingDirection
   flagged     Boolean      @default(false)  // triggers admin review when score <= 2
+  isVisible   Boolean      @default(true) // can be hidden by admin moderation
+  dispute     Dispute?
   createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
-  @@unique([tripId, fromUserId])
+  @@unique([tripId, direction]) // one rating per direction per trip
+  @@index([toUserId])
+  @@index([tripId])
   @@map("ratings")
 }
 

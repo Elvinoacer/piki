@@ -67,6 +67,8 @@ model User {
     sosEvents        SosEvent[]
     ratingsGiven     Rating[]             @relation("RatingGiven")
     ratingsReceived  Rating[]             @relation("RatingReceived")
+    disputesRaised   Dispute[]            @relation("DisputesRaised")
+    disputesResolved Dispute[]            @relation("DisputesResolved")
     reportsMade      Report[]             @relation("ReportsMade")
     reportsReceived  Report[]             @relation("ReportsReceived")
     blocksMade       Block[]              @relation("BlocksMade")

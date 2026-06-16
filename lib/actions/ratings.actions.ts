@@ -2,7 +2,7 @@
 // src/lib/actions/ratings.actions.ts
 
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { getServerAuth } from "@/lib/auth/session";
 import { recomputeRiderTrustScore } from "@/lib/trust-score";
 import type {
   SubmitRatingPayload,
@@ -19,8 +19,9 @@ const MAX_RATING_WINDOW_HOURS = 72; // clients can rate up to 72h after trip com
 export async function submitRating(
   payload: SubmitRatingPayload
 ): Promise<{ success: true; data: RatingResponse } | { success: false; error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { success: false, error: "Unauthenticated" };
+  const session = await getServerAuth();
+  if (!session?.sub) return { success: false, error: "Unauthenticated" };
+  const userId = session.sub;
 
   const { tripId, score, comment, tags = [] } = payload;
 
@@ -41,22 +42,22 @@ export async function submitRating(
 
   // Enforce rating window
   const cutoff = new Date(
-    (trip.completedAt ?? trip.updatedAt).getTime() +
+    (trip.tripEndedAt ?? trip.updatedAt).getTime() +
       MAX_RATING_WINDOW_HOURS * 60 * 60 * 1000
   );
   if (new Date() > cutoff) {
     return { success: false, error: "Rating window has expired" };
   }
 
-  const isClient = trip.clientId === session.user.id;
-  const isRider = trip.rider?.userId === session.user.id;
+  const isClient = trip.clientId === userId;
+  const isRider = trip.rider?.id === userId;
 
   if (!isClient && !isRider) {
     return { success: false, error: "You were not part of this trip" };
   }
 
   const direction = isClient ? "CLIENT_TO_RIDER" : "RIDER_TO_CLIENT";
-  const toUserId = isClient ? trip.rider!.userId : trip.clientId;
+  const toUserId = isClient ? trip.rider!.id : trip.clientId;
 
   // Check for duplicate rating in same direction
   const existing = await prisma.rating.findUnique({
@@ -69,7 +70,7 @@ export async function submitRating(
   const rating = await prisma.rating.create({
     data: {
       tripId,
-      fromUserId: session.user.id,
+      fromUserId: userId,
       toUserId,
       direction,
       score,
@@ -103,8 +104,9 @@ export async function submitRating(
 export async function getTripRatingSummary(
   tripId: string
 ): Promise<RatingSummaryForTrip | null> {
-  const session = await auth();
-  if (!session?.user?.id) return null;
+  const session = await getServerAuth();
+  if (!session?.sub) return null;
+  const userId = session.sub;
 
   const trip = await prisma.trip.findUnique({
     where: { id: tripId },
@@ -112,8 +114,8 @@ export async function getTripRatingSummary(
   });
   if (!trip) return null;
 
-  const isClient = trip.clientId === session.user.id;
-  const isRider = trip.rider?.userId === session.user.id;
+  const isClient = trip.clientId === userId;
+  const isRider = trip.rider?.id === userId;
   if (!isClient && !isRider) return null;
 
   const [c2r, r2c] = await Promise.all([
@@ -140,7 +142,7 @@ export async function getTripRatingSummary(
 
   // A dispute can be raised within 7 days of completion
   const disputeWindow = new Date(
-    (trip.completedAt ?? trip.updatedAt).getTime() + 7 * 24 * 60 * 60 * 1000
+    (trip.tripEndedAt ?? trip.updatedAt).getTime() + 7 * 24 * 60 * 60 * 1000
   );
   const canDispute = trip.status === "COMPLETED" && new Date() < disputeWindow;
 
@@ -158,8 +160,9 @@ export async function getTripRatingSummary(
 export async function submitDispute(
   payload: SubmitDisputePayload
 ): Promise<{ success: true; data: DisputeResponse } | { success: false; error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { success: false, error: "Unauthenticated" };
+  const session = await getServerAuth();
+  if (!session?.sub) return { success: false, error: "Unauthenticated" };
+  const userId = session.sub;
 
   const { tripId, ratingId, reason, description } = payload;
 
@@ -174,15 +177,15 @@ export async function submitDispute(
   if (!trip) return { success: false, error: "Trip not found" };
 
   const isParticipant =
-    trip.clientId === session.user.id ||
-    trip.rider?.userId === session.user.id;
+    trip.clientId === userId ||
+    trip.rider?.id === userId;
   if (!isParticipant) {
     return { success: false, error: "You were not part of this trip" };
   }
 
   // One open dispute per user per trip
   const existingOpen = await prisma.dispute.findFirst({
-    where: { tripId, raisedById: session.user.id, status: "OPEN" },
+    where: { tripId, raisedById: userId, status: "OPEN" },
   });
   if (existingOpen) {
     return {
@@ -195,7 +198,7 @@ export async function submitDispute(
     data: {
       tripId,
       ratingId: ratingId ?? null,
-      raisedById: session.user.id,
+      raisedById: userId,
       reason,
       description: description.trim(),
       status: "OPEN",

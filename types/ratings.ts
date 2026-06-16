@@ -101,6 +101,8 @@ export interface TrustScoreResponse {
   riderId: string;
   averageScore: number;
   totalRatings: number;
+  fiveStarCount: number;
+  oneStarCount: number;
   currentStreakCount: number;
   matchingPriority: number;
   tierLevel: number;

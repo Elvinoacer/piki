@@ -73,6 +73,7 @@ model Trip {
   shareLinks      TripShareLink[]
   trailPoints     TripTrailPoint[]
   ratings         Rating[]
+  disputes        Dispute[]
   reports         Report[]
   nightCheckIns   NightCheckIn[]
 

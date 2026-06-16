@@ -70,6 +70,7 @@ model RiderProfile {
   /// Denormalized for fast sort/display; recalculated by a background job.
   ratingAverage Float @default(0)
   ratingCount   Int   @default(0)
+  trustScore    RiderTrustScore?
 
   // --- SACCO linkage (2.x roles — "SACCO-affiliated rider") --------------------
   saccoId             String?

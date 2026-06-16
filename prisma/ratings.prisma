@@ -1,0 +1,90 @@
+// ============================================================
+// PIKII — 3.8 Ratings, Reviews & Trust
+// ============================================================
+
+// ── Enums ────────────────────────────────────────────────────
+
+enum BadgeType {
+  VERIFIED
+  TOP_RATED
+  FIVE_STAR_STREAK
+  SACCO_CERTIFIED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum DisputeReason {
+  WRONG_FARE
+  RIDER_DID_NOT_ARRIVE
+  UNSAFE_DRIVING
+  HARASSMENT
+  ITEM_DAMAGED_OR_LOST
+  ROUTE_DEVIATION
+  PAYMENT_ISSUE
+  OTHER
+}
+
+// ── Models ────────────────────────────────────────────────────
+
+model RiderTrustScore {
+  id                  String   @id @default(cuid())
+  riderId             String   @unique
+  averageScore        Float    @default(5.0)  // rolling average (1–5)
+  totalRatings        Int      @default(0)
+  fiveStarCount       Int      @default(0)
+  oneStarCount        Int      @default(0)
+  currentStreakCount  Int      @default(0)    // consecutive 5-star trips
+  longestStreak       Int      @default(0)
+  matchingPriority    Int      @default(50)   // 0–100; higher = preferred in dispatch
+  tierLevel           Int      @default(1)    // 1 = Standard, 2 = Silver, 3 = Gold
+  updatedAt           DateTime @updatedAt
+
+  rider               RiderProfile @relation(fields: [riderId], references: [id])
+  badges              Badge[]
+
+  @@map("rider_trust_scores")
+}
+
+model Badge {
+  id                  String    @id @default(cuid())
+  trustScoreId        String
+  type                BadgeType
+  label               String    // display label e.g. "Top Rated"
+  awardedAt           DateTime  @default(now())
+  expiresAt           DateTime? // null = permanent
+  isActive            Boolean   @default(true)
+
+  trustScore          RiderTrustScore @relation(fields: [trustScoreId], references: [id])
+
+  @@unique([trustScoreId, type]) // one of each badge type per rider at a time
+  @@map("badges")
+}
+
+model Dispute {
+  id          String        @id @default(cuid())
+  tripId      String
+  ratingId    String?       @unique  // optionally tied to a specific rating
+  raisedById  String
+  reason      DisputeReason
+  description String        @db.Text
+  status      DisputeStatus @default(OPEN)
+  resolution  String?       @db.Text // admin resolution note
+  resolvedById String?
+  resolvedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  trip        Trip          @relation(fields: [tripId], references: [id])
+  rating      Rating?       @relation(fields: [ratingId], references: [id])
+  raisedBy    User          @relation("DisputesRaised", fields: [raisedById], references: [id])
+  resolvedBy  User?         @relation("DisputesResolved", fields: [resolvedById], references: [id])
+
+  @@index([tripId])
+  @@index([status])
+  @@map("disputes")
+}

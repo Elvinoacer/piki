@@ -41,6 +41,25 @@ function extractBearerToken(req: NextRequest): string | null {
 }
 
 /**
+ * Like {@link requireAuth}, but reads the token from next/headers.
+ * Designed for use in Server Actions where NextRequest is not available.
+ */
+export async function getServerAuth(): Promise<AccessTokenPayload | null> {
+  const { headers } = await import("next/headers");
+  const headerList = await headers();
+  const authHeader = headerList.get("authorization");
+  if (!authHeader) return null;
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  
+  try {
+    return await verifyAccessToken(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Verifies the access token from the request and returns the decoded
  * payload. Throws {@link UnauthorizedError} if missing/invalid/expired.
  *
