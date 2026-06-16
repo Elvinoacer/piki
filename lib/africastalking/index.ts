@@ -1,6 +1,7 @@
 // lib/africastalking/index.ts
 // Africa's Talking SMS integration
 
+// @ts-ignore
 import AfricasTalking from "africastalking";
 
 const credentials = {
