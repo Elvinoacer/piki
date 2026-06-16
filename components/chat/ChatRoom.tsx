@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/hooks";
 import { Loader2, LockKeyhole } from "lucide-react";
 import { useChatStore } from "@/store/useCommunicationStore";
 import { useChatChannel } from "@/lib/pusher/hooks";
@@ -13,12 +13,21 @@ import type { ChatMessage } from "@/types/communication";
 
 interface ChatRoomProps {
   tripId: string;
-  currentUserId: string;
-  otherPartyLabel: "Rider" | "Client";
 }
 
-export function ChatRoom({ tripId, currentUserId, otherPartyLabel }: ChatRoomProps) {
+export function ChatRoom({ tripId }: ChatRoomProps) {
   const { data: session } = useSession();
+  
+  let currentUserId = "";
+  let otherPartyLabel: "Rider" | "Client" = "Client";
+  if (session?.accessToken) {
+    try {
+      const payload = JSON.parse(atob(session.accessToken.split('.')[1]));
+      currentUserId = payload.sub;
+      otherPartyLabel = payload.role === "RIDER" ? "Client" : "Rider";
+    } catch (e) {}
+  }
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
