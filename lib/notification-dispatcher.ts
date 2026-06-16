@@ -100,7 +100,7 @@ async function sendToChannel(args: ChannelSendArgs): Promise<void> {
       channel,
       title,
       body,
-      data: data ?? undefined,
+      data: data as any ?? undefined,
     },
   });
 
