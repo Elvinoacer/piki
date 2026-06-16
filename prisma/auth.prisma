@@ -79,6 +79,11 @@ model User {
     payerPayments   Payment[]       @relation("PayerPayments")
     riderPayouts    Payout[]        @relation("RiderPayouts")
 
+    // --- 3.6 Communication Relations -------------------------------------------
+    chatMessages    ChatMessage[]   @relation("MessageSender")
+    notifications   Notification[]
+    notificationPreference NotificationPreference?
+
     @@index([role, status])
     @@index([referredById])
     @@map("users")
