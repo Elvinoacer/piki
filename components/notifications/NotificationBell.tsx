@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bell, CheckCheck, Loader2 } from "lucide-react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/hooks";
 import { cn } from "@/lib/utils";
 import { useNotificationStore } from "@/store/useCommunicationStore";
 import { useNotificationChannel } from "@/lib/pusher/hooks";
@@ -29,14 +29,22 @@ export function NotificationBell() {
   } = useNotificationStore();
 
   // Real-time subscription
-  useNotificationChannel(session?.user?.id ?? null);
+  let userId = null;
+  if (session?.accessToken) {
+    try {
+      const payload = JSON.parse(atob(session.accessToken.split('.')[1]));
+      userId = payload.sub;
+    } catch {}
+  }
+
+  useNotificationChannel(userId);
 
   // ── Fetch on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!userId) return;
     loadNotifications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id]);
+  }, [userId]);
 
   const loadNotifications = async () => {
     setLoading(true);
