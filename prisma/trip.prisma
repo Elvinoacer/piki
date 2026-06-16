@@ -69,6 +69,12 @@ model Trip {
   client          User      @relation("ClientTrips", fields: [clientId], references: [id])
   riderId         String?
   rider           User?     @relation("RiderTrips", fields: [riderId], references: [id])
+  sosEvents       SosEvent[]
+  shareLinks      TripShareLink[]
+  trailPoints     TripTrailPoint[]
+  ratings         Rating[]
+  reports         Report[]
+  nightCheckIns   NightCheckIn[]
 
   status          TripStatus @default(REQUESTED)
   type            TripType
